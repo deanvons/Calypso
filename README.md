@@ -168,7 +168,7 @@ printf("DEBUG: initial=%d  burn_rate=%d  elapsed=%d\n", initial_fuel, burn_rate,
 The inputs are correct — that tells you the bug is in the arithmetic, not in the values going into it. A trace from outside the calculation can confirm that; the debugger then lets you watch each variable change line by line to see which one goes wrong first.
 
 **How to use the VS Code debugger (for Challenges 4 and 5)**
-Open `main.c` in VS Code. Click in the left gutter next to the `consumed` line to set a breakpoint. Press `F5` to start a debug session (select "C/C++: cl.exe build and debug active file" if prompted). Execution pauses at the breakpoint. Use `F10` (step over) to advance one line at a time and watch the **Variables** panel update after each step. To set a conditional breakpoint: right-click the breakpoint dot, choose "Edit Breakpoint", and enter a condition such as `fuel_reading > initial_fuel`.
+Open `main.c` in VS Code. Click in the left gutter next to the `consumed` line to set a breakpoint. Press `F5` to start a debug session (select "C/C++: cl.exe build and debug active file" if prompted). Execution pauses at the breakpoint. Use `F10` (step over) to advance one line at a time and watch the **Variables** panel update after each step. To set a conditional breakpoint: click in the gutter next to the `printf("Fuel sensor reading")` line (after `fuel_reading` has been assigned), right-click the breakpoint dot, choose "Edit Breakpoint", and enter a condition such as `fuel_reading > initial_fuel`. The condition must be on a line *after* the assignment — debuggers pause before a line executes, so a condition on the assignment line itself would evaluate an uninitialized value.
 
 ---
 
@@ -230,7 +230,7 @@ Add `printf` calls to `main()` — before the sensor calculation to print the th
 Set a breakpoint on the first line of the sensor calculation in VS Code and step through each line. After each step, look at the Variables panel. What can you observe about `consumed` and `fuel_reading` that the `printf` trace from Challenge 3 did not show you? Name one thing the interactive debugger lets you do that `printf` tracing cannot do without modifying and recompiling the code.
 
 **Challenge 5 — Additive (stretch)**
-Set a conditional breakpoint on the `fuel_reading` line that only triggers when `fuel_reading` would exceed `initial_fuel` (which it always is, given the sign error). What condition expression did you enter in VS Code? Explain why this is more efficient than an unconditional breakpoint when the same sensor read is performed many times in sequence — for example, once per second over a 10-minute mission.
+Set a conditional breakpoint on the `printf("Fuel sensor reading")` line — after `fuel_reading` has been assigned — that only triggers when `fuel_reading` exceeds `initial_fuel` (which it always is, given the sign error). What condition expression did you enter in VS Code? Explain why this is more efficient than an unconditional breakpoint when the same sensor read is performed many times in sequence — for example, once per second over a 10-minute mission.
 
 ---
 
