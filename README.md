@@ -62,6 +62,34 @@ git show <hash>            # inspect the solution in isolation
 
 ---
 
+*The following solutions are added in the `SOLUTION:` commit at the top of the `phase-02_debugging` branch. Additive challenges (3 and 5) are resolved in code — see `main.c`.*
+
+### Challenge 1 — `%c` vs `%d` on the same `char`
+
+`printf("%c", cmd)` prints the character whose ASCII code equals `cmd` (e.g. `A` for the value 65). `printf("%d", cmd)` prints the same bytes interpreted as a decimal integer (e.g. `65`). Both compile without error because `printf` accepts a variadic argument list and applies no type checking — the format specifier is the only instruction it has about how to interpret the bytes it receives. A `char` is a small integer; `%c` and `%d` are just two different lenses over the same raw value.
+
+### Challenge 2 — Signalling a fault via return value
+
+Return any non-zero value from `main()` to signal failure — the C standard defines `EXIT_FAILURE` (typically `1`) in `<stdlib.h>` for this purpose. The OS passes the return value to whatever launched the program. On Linux and macOS an operator script checks `$?` immediately after the program exits; on Windows it reads `%ERRORLEVEL%`. A mission control script could check for a non-zero exit code, log the anomaly, and suppress a launch authorisation — all without any additional IPC or messaging.
+
+### Challenge 4 — Compile-time date vs runtime date
+
+`__DATE__` is substituted by the preprocessor before compilation — it is a string literal baked into the binary, not computed at runtime. If Calypso runs for months without recompilation, the banner always shows the build date, not the launch date. The runtime alternative is `time()` from `<time.h>`, which returns the current Unix timestamp, combined with `strftime()` to format it as a human-readable string. `<time.h>` is outside the scope of this repo, but the distinction between compile-time and runtime values is the key idea here — and it will resurface in Phase 15 when the preprocessor is covered properly.
+
+### Thought piece 1 — Finding a fault in static output without error messages
+
+Without error messages, the only tool available is systematic tracing — inserting `printf` calls at key points to print the value of every variable that might be wrong, then narrowing down which one diverges from the expected value first. That process, applied consistently, is printf-trace debugging. The VS Code debugger automates the same process: instead of modifying source to add prints, you set breakpoints and inspect values interactively. Phase 2 covers both techniques directly.
+
+### Thought piece 2 — `scanf` and a non-matching format specifier
+
+For `%c`, any character the user types is a valid match — there is no format mismatch possible. For numeric specifiers like `%d`, typing letters leaves the input unconsumed in the buffer and `scanf` returns `0` (number of successful conversions). Without checking the return value, the program continues with whatever value the target variable held before the call — possibly uninitialised, possibly a stale value from an earlier read. No crash, no error message, just silently wrong behaviour. Checking `scanf`'s return value is the correct guard; this will be revisited when input validation is introduced.
+
+### Thought piece 3 — Linker error vs compiler error
+
+A linker error means the source compiled successfully — no syntax mistakes, all declarations resolved — but the linker could not find the machine code for a symbol that the object file references. The bug is not in the source text but in what gets linked: a missing source file, a missing `-l` flag, or a function declared but never defined. The classic example is calling a function that is declared in a header but whose `.c` file was not passed to the compiler. The compiler accepts the declaration; the linker fails when it cannot find the body.
+
+---
+
 ## 💡 Why we made this decision
 
 ### Start with a single file and no abstractions
