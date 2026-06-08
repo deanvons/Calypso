@@ -140,13 +140,37 @@ We use `printf` and `scanf` from `<stdio.h>` rather than any higher-level I/O he
 
 ## 🔍 What to notice in the code
 
-_Completed after code is written._
+**[`main.c`](main.c)**
+The boot banner uses `printf` with the `%s` format specifier to embed `__DATE__` — a string produced by the preprocessor at compile time, not at runtime. The `// NOTE:` comment flags it as a Phase 15 topic so students know it is not unexplained magic. Everything in the banner is a literal format string; the format specifiers `%s` and `%c` are the only dynamic elements.
+
+**[`main.c` — `scanf` call](main.c)**
+`scanf(" %c", &cmd)` has two things worth examining: the address-of operator (`&cmd`) tells `scanf` where to write the result, and the leading space in `" %c"` silently discards any whitespace — including the newline left by pressing Enter — before reading the character. The block comment above the call explains both. Removing the `&` compiles without error on most setups but writes to a garbage address at runtime.
+
+**[`CMakeLists.txt`](CMakeLists.txt)**
+The `if(MSVC)` block suppresses MSVC's deprecation warning for standard C functions like `scanf`. It is build scaffolding, not a lesson — CMake and the preprocessor are covered properly in Phase 15. GCC and Clang compile `main.c` without this definition.
 
 ---
 
 ## ▶️ Running this branch
 
-_Completed after code is written._
+**Prerequisites:** GCC or Clang (C99+) and CMake 3.10+, or just GCC/Clang on its own.
+
+**With CMake (recommended):**
+```bash
+cmake -B build
+cmake --build build
+.\build\Debug\calypso.exe   # Windows (MSVC)
+.\build\calypso.exe         # Windows (MinGW)
+./build/calypso             # Linux / macOS
+```
+
+**Direct compilation (no CMake):**
+```bash
+gcc main.c -o calypso
+./calypso
+```
+
+The program prints the boot banner, prompts for a single character, echoes it, and exits. Press any key followed by Enter when prompted.
 
 ---
 
