@@ -30,6 +30,9 @@ int main(void) {
     int burn_rate    = 5;     /* kg per second at cruise thrust */
     int elapsed      = 10;    /* seconds since engine ignition */
 
+    // SOLUTION (Challenge 3): printf trace -- confirm inputs before the calculation
+    printf("DEBUG: initial_fuel=%d  burn_rate=%d  elapsed=%d\n", initial_fuel, burn_rate, elapsed);
+
     /* DELIBERATE (Bug 1 - off-by-one): should be burn_rate * elapsed */
     int consumed     = burn_rate * (elapsed + 1);
 
