@@ -130,10 +130,10 @@ Both techniques are introduced in this phase, but `printf` tracing comes first f
 - **Contrast** `printf`-based debugging with interactive debugger use: when each is the right tool, and what trade-offs matter in desktop vs embedded development contexts
 
 ### Apply
-- **Use** `printf`-based tracing to inspect intermediate values inside `simulate_fuel_sensor()` and confirm which code paths execute at runtime
-- **Set** breakpoints inside `simulate_fuel_sensor()` in Visual Studio Code and step through execution line by line to observe program state at any point
+- **Use** `printf`-based tracing to inspect intermediate values in the sensor calculation and confirm which code paths execute at runtime
+- **Set** breakpoints in Visual Studio Code and step through execution line by line to observe program state at any point during a run
 - **Inspect** variable values and the call stack in the Visual Studio Code debugger to locate where the actual fuel reading diverges from the expected value
-- **Create** a conditional breakpoint on the return line of `simulate_fuel_sensor()` and explain when a conditional breakpoint is more efficient than an unconditional one
+- **Create** a conditional breakpoint and explain when it is more efficient than an unconditional one
 
 ---
 
