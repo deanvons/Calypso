@@ -175,19 +175,19 @@ The bugs in `simulate_fuel_sensor()` use `int` for every value — initial level
 ## ✏️ Challenges for students
 
 **Challenge 1 — Analytical**
-The simulation reports a fuel level higher than the full tank and rising. Before looking at the function body, classify this as a syntax error, a logical error, or undefined behaviour — and explain your reasoning. What does your classification tell you about the right investigation strategy?
+The simulation reports a fuel level higher than the full tank and rising. Before reading the implementation, classify this as a syntax error, a logical error, or undefined behaviour — and explain your reasoning. What does your classification tell you about the right investigation strategy?
 
 **Challenge 2 — Analytical**
-You have two tools: `printf` tracing and the VS Code debugger. For each of the following scenarios, identify which tool you would reach for first and explain why: (a) debugging a function called 10,000 times where the bug only appears on call 9,347; (b) debugging firmware running on a bare-metal MCU with no OS and no debugger port available.
+You have two tools: `printf` tracing and the VS Code debugger. For each of the following scenarios, identify which tool you would reach for first and explain why: (a) a calculation that runs 10,000 times and only produces the wrong result on iteration 9,347; (b) firmware running on a bare-metal MCU with no OS and no debugger port available.
 
 **Challenge 3 — Additive**
-Add `printf` trace calls inside `simulate_fuel_sensor()` that print the values of `consumed` and the return value before the function returns. Run the program and use the trace output to identify which variable holds the wrong value first and why. Remove the trace calls when you are done — a solution without them is cleaner teaching material.
+Add `printf` calls to `main()` — before the `simulate_fuel_sensor()` call to print the three input values (`initial_fuel`, `burn_rate`, `elapsed`), and after it to print `fuel_reading` alongside the expected result. Run the program and use that output to explain what the trace confirms: are the inputs correct, and does the output match what correct arithmetic would produce? What can you conclude from `main()` alone, and what can you not yet determine?
 
 **Challenge 4 — Analytical**
-In the VS Code debugger, set a breakpoint inside `simulate_fuel_sensor()` and step through to the return statement. Open the call stack panel. What information does it show you that the `printf` trace from Challenge 3 did not? Name one debugging question that the call stack answers that `printf` tracing cannot answer efficiently.
+In the VS Code debugger, set a breakpoint on the first line inside `simulate_fuel_sensor()` and step through to the `return` statement. Open the call stack panel. What information does it show you that the `printf` trace from Challenge 3 did not? Name one debugging question that the call stack answers that `printf` tracing cannot answer efficiently.
 
 **Challenge 5 — Additive (stretch)**
-Set a conditional breakpoint on the `return` line of `simulate_fuel_sensor()` that only triggers when the return value is greater than `initial_level` (which it always is, given the sign error). What condition expression did you enter in VS Code? Explain why this is more efficient than an unconditional breakpoint when `simulate_fuel_sensor()` is called in a loop — for example, once per second over a 10-minute mission.
+Set a conditional breakpoint on the `return` line of `simulate_fuel_sensor()` that only triggers when the return value is greater than `initial_level` (which it always is, given the sign error). What condition expression did you enter in VS Code? Explain why this is more efficient than an unconditional breakpoint when the same sensor read is performed many times in sequence — for example, once per second over a 10-minute mission.
 
 ---
 
