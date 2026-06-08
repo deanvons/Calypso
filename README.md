@@ -186,13 +186,67 @@ Writing `if (raw_value > 65535)` is a magic number: the number carries no inform
 
 ## 🔍 What to notice in the code
 
-*This section will be completed after the code is written.*
+**[`main.c` — includes](main.c)**
+Three headers instead of one. `<stdint.h>` provides the fixed-width types; `<inttypes.h>` provides the `PRI` format macros. Neither is pulled in by `<stdio.h>`. The order mirrors the dependency: types are defined before their format specifiers can reference them.
+
+**[`main.c` — `TANK_CAPACITY_KG` and `BURN_RATE_KGS`](main.c)**
+Both are declared `const uint16_t` and `const uint8_t` on the same line as their initialisation. `const` makes the compiler refuse any later assignment. This is the correct pattern for mission parameters that are known at startup and must not change — it converts a naming convention ("treat this as constant") into a compiler-enforced rule.
+
+**[`main.c` — `mission_elapsed_s` two-step form](main.c)**
+Declared as `uint32_t mission_elapsed_s;` on one line, then assigned `= 10;` on the next. This is the two-step form — declaration separate from initialisation. Both steps are visible in the code so you can see they are distinct operations. In practice, two-step initialisation appears when the value is not known until after a function call or a conditional block.
+
+**[`main.c` — `consumed_kg` and `fuel_level`](main.c)**
+`BURN_RATE_KGS * mission_elapsed_s` promotes to `uint32_t` (the wider operand). The explicit cast to `uint16_t` documents the narrowing intentionally — without it, the compiler may warn about the implicit conversion, and the code is harder to audit. The subtraction is now `TANK_CAPACITY_KG - consumed_kg` — the sign error from Phase 2 (`+` instead of `-`) is fixed.
+
+**[`main.c` — `raw_fuel_adc` guard](main.c)**
+`raw_fuel_adc` is `uint32_t` and simulates an ADC value before it has been narrowed to `uint16_t`. The guard `raw_fuel_adc > UINT16_MAX` checks that the value fits before it is ever assigned — preventing a silent truncation. `UINT16_MAX` makes the limit self-describing; if the destination type changes, the constant name changes too.
+
+**[`main.c` — `engine_temp_delta` and `raw_temp` guard](main.c)**
+`engine_temp_delta` is `int8_t` — signed because the delta can be negative during a cooling phase. The guard checks `raw_temp < INT8_MIN || raw_temp > INT8_MAX` against an `int` that is deliberately out of range. This is the pattern for validating a sensor value from an external bus before narrowing it to a smaller type.
+
+**[`main.c` — `PRIu16`, `PRId8`, `PRIu32` format macros](main.c)**
+Each `printf` for a fixed-width type uses the matching `PRI` macro rather than a hand-picked `%d` or `%u`. The macros expand to the correct specifier for the platform — `%hu` for `uint16_t`, `%hhd` for `int8_t`, and so on. Using `%d` on a `uint16_t` is undefined behaviour if the sizes differ; the `PRI` macros eliminate that class of bug.
+
+**[`main.c` — `engine_status_reg = 0x1F`](main.c)**
+The hex literal `0x1F` is assigned to `uint8_t engine_status_reg`. The comment shows the binary and decimal equivalents. `printf` prints the value with `%02X` (two hex digits, zero-padded) and `%u` (decimal). Comparing the two outputs confirms they represent the same byte — and shows why hex is more useful than decimal for a value where individual bits matter.
 
 ---
 
 ## ▶️ Running this branch
 
-*This section will be completed after the code is written.*
+**Prerequisites:** GCC or Clang (C99+) and CMake 3.10+, or just GCC/Clang on its own.
+
+**With CMake (recommended):**
+```bash
+cmake -B build
+cmake --build build
+.\build\Debug\calypso.exe   # Windows (MSVC)
+.\build\calypso.exe         # Windows (MinGW)
+./build/calypso             # Linux / macOS
+```
+
+**Direct compilation (no CMake):**
+```bash
+gcc -std=c99 main.c -o calypso
+./calypso
+```
+
+The program prints the boot banner, triggers both range-check fault messages (the out-of-range ADC values are deliberate), then prints the corrected sensor readings, and prompts for a command character and crew ID.
+
+**Expected output (sensor section):**
+```
+FAULT: fuel ADC reading (65540) exceeds uint16_t range [0, 65535]
+
+--- Sensor Status ---
+Fuel level           : 950 kg
+FAULT: temperature delta (-130) outside int8_t range [-128, 127]
+Engine temp delta    : -12 K
+Mission elapsed      : 10 s
+
+Engine status reg    : 0x1F  (decimal: 31)
+```
+
+Fuel level is now 950 kg — the correct result of `1000 − 5 × 10`. Both Phase 2 bugs are fixed: the off-by-one (the extra `+1` in the burn period) and the sign error (addition replaced by subtraction).
 
 ---
 
