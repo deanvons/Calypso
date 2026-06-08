@@ -1,10 +1,12 @@
-# Phase README — Hello Calypso
+# Phase README — Diagnosing the Computer
 
-> **Phase 01 — The C Compilation Model and First Program** | Calypso · Core C
+> **Phase 02 — Debugging C Programs** | Calypso · Core C
 
-The flight computer boots, identifies itself, and reads its first operator command from the terminal.
+The flight computer's fuel sensor is misreporting values — two bugs are hiding in a function that compiles cleanly, runs without crashing, and gives a confident wrong answer.
 
-Before Calypso can do anything — read sensors, advance mission phases, manage crew — we need to prove the toolchain works and give the shuttle a voice. This phase builds the simplest possible program that does something real: a boot banner printed with `printf`, a command character read with `scanf`. Its deliberate simplicity is the point — a single `main.c` keeps the focus on the compilation pipeline itself, which is the foundation everything else in this repo stands on.
+Before Calypso can fly, its sensor readings must be trustworthy. This phase introduces the two most important tools for finding bugs that the compiler cannot catch: printf-trace debugging and the VS Code interactive debugger. A deliberately-broken `simulate_fuel_sensor()` function gives you a real target to investigate — the wrong output is visible, the cause is not. The lesson is the investigation process itself; the bugs are left unfixed because fixing them requires knowledge of integer types that Phase 3 will introduce.
+
+> **A note on scope.** This phase is about finding bugs, not fixing them. The `simulate_fuel_sensor()` function contains deliberate defects that will be corrected in Phase 3. Resist the temptation to fix the code here — the goal is to practice systematic investigation, not to patch the symptom.
 
 ---
 
@@ -18,8 +20,10 @@ Before Calypso can do anything — read sensors, advance mission phases, manage 
 - [Learning goals](#-learning-goals)
 - [Key concepts](#-key-concepts)
 - [What to notice in the code](#-what-to-notice-in-the-code)
+- [What this phase revealed](#-what-this-phase-revealed)
 - [Running this branch](#-running-this-branch)
 - [Challenges for students](#-challenges-for-students)
+- [Thought pieces for the next branch](#-thought-pieces-for-the-next-branch)
 
 ---
 
@@ -28,8 +32,8 @@ Before Calypso can do anything — read sensors, advance mission phases, manage 
 | Branch | What it introduces | Abstraction level |
 |---|---|---|
 | `main` | Project scaffold — compiles and runs | Scaffold only |
-| `📌 phase-01_boot-and-io` | **First program · `printf` / `scanf` · compilation model** | Raw I/O |
-| `phase-02_debugging` | `printf`-trace debugging · VS Code debugger · breakpoints | — |
+| `phase-01_boot-and-io` | First program · `printf` / `scanf` · compilation model | Raw I/O |
+| `📌 phase-02_debugging` | **`printf` tracing · VS Code debugger · three C error categories** | — |
 | `phase-03_integer-types` | `stdint.h` fixed-width types · `PRIu16` format specifiers · overflow guards | — |
 | `phase-04_compound-types` | `float` · `char` · `bool` · `enum MissionPhase` · `typedef` | — |
 | `phase-05_operators` | Arithmetic · relational · logical · `sizeof` · explicit casts | — |
@@ -51,18 +55,14 @@ Before Calypso can do anything — read sensors, advance mission phases, manage 
 
 ### How challenges work
 
-This is the first phase — there are no previous challenges or thought pieces to resolve.
-
-From Phase 2 onward, every phase branch opens with a `SOLUTION:` commit that resolves the previous phase's additive challenges in code, and answers the analytical challenges and thought pieces here in the README.
+Additive challenges from the previous branch are solved in the first commit of this
+branch — look for the `SOLUTION:` commit at the top of this branch's git history.
+Analytical challenges and thought pieces are answered below.
 
 ```bash
 git log --oneline          # find the SOLUTION commit hash
 git show <hash>            # inspect the solution in isolation
 ```
-
----
-
-*The following solutions are added in the `SOLUTION:` commit at the top of the `phase-02_debugging` branch. Additive challenges (3 and 5) are resolved in code — see `main.c`.*
 
 ### Challenge 1 — `%c` vs `%d` on the same `char`
 
@@ -70,84 +70,70 @@ git show <hash>            # inspect the solution in isolation
 
 ### Challenge 2 — Signalling a fault via return value
 
-Return any non-zero value from `main()` to signal failure — the C standard defines `EXIT_FAILURE` (typically `1`) in `<stdlib.h>` for this purpose. The OS passes the return value to whatever launched the program. On Linux and macOS an operator script checks `$?` immediately after the program exits; on Windows it reads `%ERRORLEVEL%`. A mission control script could check for a non-zero exit code, log the anomaly, and suppress a launch authorisation — all without any additional IPC or messaging.
+Return any non-zero value from `main()` to signal failure — the C standard defines `EXIT_FAILURE` (typically `1`) in `<stdlib.h>` for this purpose. The OS passes the return value to whatever launched the program. On Linux and macOS an operator script checks `$?` immediately after the program exits; on Windows it reads `%ERRORLEVEL%`. A mission control script could check for a non-zero exit code, log the anomaly, and suppress a launch authorisation — all without any additional messaging.
 
 ### Challenge 4 — Compile-time date vs runtime date
 
-`__DATE__` is substituted by the preprocessor before compilation — it is a string literal baked into the binary, not computed at runtime. If Calypso runs for months without recompilation, the banner always shows the build date, not the launch date. The runtime alternative is `time()` from `<time.h>`, which returns the current Unix timestamp, combined with `strftime()` to format it as a human-readable string. `<time.h>` is outside the scope of this repo, but the distinction between compile-time and runtime values is the key idea here — and it will resurface in Phase 15 when the preprocessor is covered properly.
+`__DATE__` is substituted by the preprocessor before compilation — a string literal baked into the binary, not computed at runtime. If Calypso runs for months without recompilation, the banner always shows the build date, not the launch date. The runtime alternative is `time()` from `<time.h>`, which returns the current Unix timestamp, combined with `strftime()` to format it as a human-readable string. The distinction between compile-time and runtime values is the key idea here; it resurfaces properly in Phase 15.
 
 ### Thought piece 1 — Finding a fault in static output without error messages
 
-Without error messages, the only tool available is systematic tracing — inserting `printf` calls at key points to print the value of every variable that might be wrong, then narrowing down which one diverges from the expected value first. That process, applied consistently, is printf-trace debugging. The VS Code debugger automates the same process: instead of modifying source to add prints, you set breakpoints and inspect values interactively. Phase 2 covers both techniques directly.
+Without error messages, the only tool available is systematic tracing — inserting `printf` calls at key points to print the value of every variable that might be wrong, then narrowing down which one diverges from the expected value first. That is printf-trace debugging. The VS Code debugger automates the same process: instead of modifying source to add prints, you set breakpoints and inspect values interactively. Phase 2 covers both techniques directly.
 
 ### Thought piece 2 — `scanf` and a non-matching format specifier
 
-For `%c`, any character the user types is a valid match — there is no format mismatch possible. For numeric specifiers like `%d`, typing letters leaves the input unconsumed in the buffer and `scanf` returns `0` (number of successful conversions). Without checking the return value, the program continues with whatever value the target variable held before the call — possibly uninitialised, possibly a stale value from an earlier read. No crash, no error message, just silently wrong behaviour. Checking `scanf`'s return value is the correct guard; this will be revisited when input validation is introduced.
+For `%c`, any character is a valid match — no mismatch is possible. For numeric specifiers like `%d`, typing letters leaves the input unconsumed in the buffer and `scanf` returns `0` (number of successful conversions). Without checking the return value, the program continues with whatever value the variable held before the call — possibly uninitialised, possibly stale. No crash, no error message: silently wrong behaviour. Checking `scanf`'s return value is the correct guard.
 
 ### Thought piece 3 — Linker error vs compiler error
 
-A linker error means the source compiled successfully — no syntax mistakes, all declarations resolved — but the linker could not find the machine code for a symbol that the object file references. The bug is not in the source text but in what gets linked: a missing source file, a missing `-l` flag, or a function declared but never defined. The classic example is calling a function that is declared in a header but whose `.c` file was not passed to the compiler. The compiler accepts the declaration; the linker fails when it cannot find the body.
+A linker error means the source compiled successfully but the linker could not find the machine code for a symbol the object file references. The bug is not in the source text but in what gets linked: a missing source file, a missing `-l` flag, or a function declared but never defined. The compiler accepts the declaration; the linker fails when it cannot find the body.
 
 ---
 
 ## 💡 Why we made this decision
 
-### Start with a single file and no abstractions
+### Introduce deliberate bugs rather than asking students to imagine them
 
-The Calypso flight computer will eventually span multiple modules — sensors, engine control, crew management, file logging. But none of that is useful if we have not first established that the toolchain works and that the simplest possible C program compiles and runs on the target machine. Starting with a single `main.c` is not a shortcut — it is the right scope for this phase, because the compilation model is the lesson. A multi-file project at this point would immediately require understanding headers, translation units, and the linker before we have had a chance to understand what `printf` does or why `#include` is necessary.
+A student who has only ever written working code has no practice investigating misbehaving code. The natural impulse is to stare at the source until the bug becomes obvious — which works when the codebase is ten lines long and fails completely when it is not. The only way to develop systematic debugging instincts is to practise them on real misbehaving code. Introducing a deliberately-broken function in Phase 2, before the codebase grows complex, means students have investigation skills when they genuinely need them in later phases.
 
-The sequence — preprocessor → compiler → linker → executable — is a data flow that drives every build in this repo. Making it visible once, at the start, means every subsequent phase can refer back to it without re-explaining it.
+The two bugs chosen — an off-by-one and a sign error — are the most common classes of logical error in numerical code. The sign error (adding consumed instead of subtracting it) is the kind of bug that often slips through code review because the arithmetic looks plausible at a glance. The off-by-one (inflating the burn period by one extra cycle) is subtle enough that a reader checking the logic step-by-step might miss it on the first pass. Together they give students a realistic experience of debugging that requires more than visual inspection.
 
-This repo uses CMake as its build system generator. CMake is not a compiler — it is a layer above the compilation pipeline. It reads `CMakeLists.txt` and generates the platform-appropriate build instructions (a `Makefile` on Linux and macOS, a `ninja.build` or MSVC project on Windows). When you run `cmake --build build`, CMake invokes the real compiler — `gcc` or `clang` — with the correct flags and source files. The pipeline below still runs exactly as described; CMake just automates the invocation. You can verify this directly: `gcc main.c -o calypso` compiles the scaffold without CMake and produces the same binary.
+### Leave the bugs unfixed
 
-```mermaid
-flowchart LR
-    Z["CMakeLists.txt"] -->|"cmake -B build"| Y["Makefile /\nninja.build"]
-    Y -->|"cmake --build"| A["main.c"]
-    A -->|preprocessor| B["preprocessed C"]
-    B -->|compiler| C["main.o"]
-    C -->|linker| D["calypso"]
-    E["stdio.h"] -.->|"#include"| A
-    F["libc"] -->|"printf / scanf"| D
-```
+Fixing `simulate_fuel_sensor()` here would blur two separate lessons. Phase 2 is about finding bugs — the investigation process. Phase 3 is about choosing the right integer types so that certain classes of bug become impossible. If we fix the bugs in Phase 2, we lose the concrete motivation for Phase 3: students would not feel the problem that `int`-everywhere creates. The unfixed bugs are not an oversight — they are the setup for the next phase's question: "would the right type have prevented this?"
 
-### Use `printf` and `scanf` directly
+### `printf` tracing before the interactive debugger
 
-We use `printf` and `scanf` from `<stdio.h>` rather than any higher-level I/O helper. This keeps the dependency chain short and visible: one `#include`, one header, one library linked at the end. Students compiling with `gcc main.c -o calypso` can see exactly what is happening — no hidden layers. The C standard library is the only I/O dependency Calypso will ever need for terminal interaction, and introducing it directly here, rather than wrapping it, means students understand what they are using before they use it.
+Both techniques are introduced in this phase, but `printf` tracing comes first for two reasons. First, it requires only what students already know — `printf` from Phase 1. Second, it is the technique that works everywhere: on desktop programs, inside embedded firmware, in situations where no interactive debugger is available. The VS Code debugger is more powerful and more efficient for desktop code, but students who understand printf tracing first will never be helpless in an environment where the debugger is not an option.
 
 ---
 
 ## ⏮️ What we built in the previous branch
 
-`main` is the project scaffold — a minimal `main.c` that prints a boot message and exits. It proves the build system is configured and the project compiles, but it has no operator interface, no formatted output, and no interactive loop. It is a starting point, not a flight computer.
+`phase-01_boot-and-io` gave Calypso a voice: a boot banner printed with `printf` using format specifiers, and a command prompt that reads a single character from the operator with `scanf`. The program is a single `main.c`, compiles with one GCC invocation, and exits after one round of I/O. It proves the toolchain works and gives the shuttle an identity, but it cannot compute anything or detect any error in its own output.
 
 ---
 
 ## 🎯 What we're doing in this branch
 
-- Replace the scaffold `main.c` with a boot banner that prints the shuttle designation and build date using `printf` with format specifiers
-- Add a command prompt that reads a single character from the operator using `scanf` and the address-of operator
-- Echo the entered command back with a status string using the `%c` format specifier
-- Demonstrate the full compile-and-run workflow from a single source file to an executing binary
+- Add `simulate_fuel_sensor()` to `main.c` — a function that should return remaining fuel level but contains an off-by-one and a sign error that cause it to misreport
+- Call the function from `main()` and print both the sensor reading and the expected value so the discrepancy is immediately visible
+- Walk through `printf`-trace debugging in the README: adding intermediate `printf` calls inside the function to expose where the wrong value first appears
+- Walk through the VS Code debugger in the README: setting a breakpoint inside the function, stepping line by line, and inspecting the call stack and variable values
 
 ---
 
 ## 🧑🏻‍🏫 Learning goals
 
 ### Understand
-- **Explain** how `main.c` is transformed into the `calypso` executable — the sequential roles of the preprocessor, compiler, and linker in the build pipeline
-- **Describe** what a `.o` object file contains and why the linker needs it to produce the final binary
-- **Distinguish** between `stdio.h` (a header — declarations only) and a `.c` source file (definitions that get compiled), and explain why C separates the two
-- **Identify** whether an error is a compiler error or a linker error based on what the message reports and where in the pipeline it occurs
-- **Identify** the four components of the Calypso `main.c`: `main()`, `#include <stdio.h>`, `printf()`, and `return 0`
-- **Explain** why `main()` is where the OS starts execution and what the integer it returns communicates to the calling process
-- **Explain** what `#include <stdio.h>` does and what would break if it were removed
-- **Explain** why `scanf("%c", &cmd)` passes `&cmd` rather than `cmd` — and what would happen at runtime if the `&` were omitted
+- **Identify** the three categories of C errors — syntax errors, logical errors, and undefined behaviour — and explain why undefined behaviour is the most dangerous of the three
+- **Contrast** `printf`-based debugging with interactive debugger use: when each is the right tool, and what trade-offs matter in desktop vs embedded development contexts
 
 ### Apply
-- **Compile** `main.c` from the command line — invoke `gcc` or `clang` directly and confirm the resulting `calypso` binary runs
-- **Use** `printf()` with `%s` and `%c` format specifiers to produce the boot banner and echo operator commands
-- **Use** `scanf()` with `%c` and the address-of operator to read a single command character from the operator
+- **Use** `printf`-based tracing to inspect intermediate values inside `simulate_fuel_sensor()` and confirm which code paths execute at runtime
+- **Set** breakpoints inside `simulate_fuel_sensor()` in Visual Studio Code and step through execution line by line to observe program state at any point
+- **Inspect** variable values and the call stack in the Visual Studio Code debugger to locate where the actual fuel reading diverges from the expected value
+- **Create** a conditional breakpoint on the return line of `simulate_fuel_sensor()` and explain when a conditional breakpoint is more efficient than an unconditional one
 
 ---
 
@@ -155,79 +141,63 @@ We use `printf` and `scanf` from `<stdio.h>` rather than any higher-level I/O he
 
 | Concept | Plain English |
 |---|---|
-| **Compilation pipeline** | The three steps that turn `main.c` into `calypso`: the preprocessor resolves `#include` directives, the compiler translates the result to machine code, and the linker combines object files with libraries into a single executable. |
-| **Object file** | The compiled but not yet linked output of a single source file — machine code with unresolved placeholders for symbols (like `printf`) whose definitions live in another file or library. |
-| **Header file** | A `.h` file containing declarations — function signatures and type definitions — but no compiled code. `#include <stdio.h>` brings `printf`'s declaration into scope so the compiler knows how to call it. |
-| **Source file** | A `.c` file containing definitions — the actual function bodies that get compiled into machine code. Each source file is compiled independently into its own object file. |
-| **Compiler error vs linker error** | A compiler error means something is wrong in the source text itself — a syntax mistake or missing declaration. A linker error means the source compiled but a symbol was declared and never defined — the linker cannot find the machine code for it. |
-| **`main()` and return value** | `main()` is the program entry point — where the OS hands control to the program. Its return value is the process exit code: `0` signals success, any non-zero value signals failure. Shell scripts and build tools read this value. |
-| **`#include` directive** | A preprocessor instruction that copies the contents of the named header file into the source file before compilation begins. Without `#include <stdio.h>`, the compiler does not know `printf` exists. |
-| **Address-of operator (`&`)** | Produces the memory address of a variable. `scanf` must write a value into the caller's variable — it needs the address to know where to write. Passing the variable directly gives `scanf` a copy, not a location to write back to. |
+| **Syntax error** | A mistake the compiler catches before producing any output — invalid C grammar (missing semicolon, mismatched braces). The program cannot compile. |
+| **Logical error** | The program compiles and runs without crashing, but produces the wrong output. The compiler has no way to detect it; only systematic testing or tracing reveals it. |
+| **Undefined behaviour** | A situation the C standard makes no promise about — the program may crash, produce garbage output, or appear to work correctly depending on the platform, compiler version, and phase of the moon. It is more dangerous than a logical error because it may be invisible until it causes a failure in production. |
+| **`printf` tracing** | Temporarily inserting `printf` calls at key points in the code to print variable values and confirm which paths execute. Works anywhere C runs; no tools required. |
+| **Breakpoint** | A marker on a source line that tells the debugger to pause execution when it reaches that line, letting you inspect the program's state before it continues. |
+| **Call stack** | The ordered list of function calls that are currently active — the sequence of frames that got execution to its current point. When paused inside `simulate_fuel_sensor()`, the call stack shows that `main()` called it and what arguments were passed. |
+| **Conditional breakpoint** | A breakpoint that only triggers when a specified Boolean condition is true. Useful when a bug only manifests after many calls or when a particular value is reached. |
+| **Step over / step into** | Two debugger navigation commands. Step over executes the current line and moves to the next without descending into any function it calls. Step into descends into the called function so you can trace its execution line by line. |
 
 ---
 
 ## 🔍 What to notice in the code
 
-**[`main.c`](main.c)**
-The boot banner uses `printf` with the `%s` format specifier to embed `__DATE__` — a string produced by the preprocessor at compile time, not at runtime. The `// NOTE:` comment flags it as a Phase 15 topic so students know it is not unexplained magic. Everything in the banner is a literal format string; the format specifiers `%s` and `%c` are the only dynamic elements.
+*Completed after code is written.*
 
-**[`main.c` — `scanf` call](main.c)**
-`scanf(" %c", &cmd)` has two things worth examining: the address-of operator (`&cmd`) tells `scanf` where to write the result, and the leading space in `" %c"` silently discards any whitespace — including the newline left by pressing Enter — before reading the character. The block comment above the call explains both. Removing the `&` compiles without error on most setups but writes to a garbage address at runtime.
+---
 
-**[`CMakeLists.txt`](CMakeLists.txt)**
-The `if(MSVC)` block suppresses MSVC's deprecation warning for standard C functions like `scanf`. It is build scaffolding, not a lesson — CMake and the preprocessor are covered properly in Phase 15. GCC and Clang compile `main.c` without this definition.
+## 🔗 What this phase revealed
+
+The bugs in `simulate_fuel_sensor()` use `int` for every value — initial level, burn rate, elapsed time, consumed fuel. `int` is platform-dependent in width: on a 16-bit MCU it may be 2 bytes, giving a maximum value of 32,767. A fuel reading that exceeds that limit wraps around silently. The sign error that causes fuel to increase rather than decrease is a logical error; the overflow that would occur if we tried to represent a realistic fuel mass in a 16-bit `int` is a category of silent data corruption that the current type selection cannot prevent.
+
+> **LEARNING MOMENT:** Using `int` for sensor values is not a neutral default — it is a choice with consequences. The right type for a sensor value depends on the platform, the value range, and what must happen when the value exceeds that range. That is exactly what Phase 3 introduces.
 
 ---
 
 ## ▶️ Running this branch
 
-**Prerequisites:** GCC or Clang (C99+) and CMake 3.10+, or just GCC/Clang on its own.
-
-**With CMake (recommended):**
-```bash
-cmake -B build
-cmake --build build
-.\build\Debug\calypso.exe   # Windows (MSVC)
-.\build\calypso.exe         # Windows (MinGW)
-./build/calypso             # Linux / macOS
-```
-
-**Direct compilation (no CMake):**
-```bash
-gcc main.c -o calypso
-./calypso
-```
-
-The program prints the boot banner, prompts for a single character, echoes it, and exits. Press any key followed by Enter when prompted.
+*Completed after code is written.*
 
 ---
 
 ## ✏️ Challenges for students
 
 **Challenge 1 — Analytical**
-`printf("%c", cmd)` and `printf("%d", cmd)` both accept the same `char` variable without a compile error. What does each print, and why do they produce different output from the same value? What does this tell you about how `printf` interprets its arguments?
+The simulation reports a fuel level higher than the full tank and rising. Before looking at the function body, classify this as a syntax error, a logical error, or undefined behaviour — and explain your reasoning. What does your classification tell you about the right investigation strategy?
 
 **Challenge 2 — Analytical**
-`return 0` in `main()` tells the OS the program exited cleanly. If Calypso encountered a fault — say `scanf` failed to read anything useful — what value would you return instead, and how would an operator script detect that the flight computer shut down abnormally?
+You have two tools: `printf` tracing and the VS Code debugger. For each of the following scenarios, identify which tool you would reach for first and explain why: (a) debugging a function called 10,000 times where the bug only appears on call 9,347; (b) debugging firmware running on a bare-metal MCU with no OS and no debugger port available.
 
 **Challenge 3 — Additive**
-Add a confirmation step after the command echo: prompt the operator to enter their crew ID as a single character, then print it back using `printf` and `%c`. You will need a second `char` variable, a second `printf` for the prompt, and a second `scanf` with the address-of operator — the same pattern as the first read, applied again.
+Add `printf` trace calls inside `simulate_fuel_sensor()` that print the values of `consumed` and the return value before the function returns. Run the program and use the trace output to identify which variable holds the wrong value first and why. Remove the trace calls when you are done — a solution without them is cleaner teaching material.
 
 **Challenge 4 — Analytical**
-The boot banner shows the build date via `__DATE__` — a value fixed at compile time. Calypso is designed to run for months without recompiling. What is the problem with a compile-time date in a long-running flight computer, and what runtime mechanism would give you the actual start time instead?
+In the VS Code debugger, set a breakpoint inside `simulate_fuel_sensor()` and step through to the return statement. Open the call stack panel. What information does it show you that the `printf` trace from Challenge 3 did not? Name one debugging question that the call stack answers that `printf` tracing cannot answer efficiently.
 
 **Challenge 5 — Additive (stretch)**
-Add a `mission_id` integer to the boot banner and print it using `%d`. Now deliberately swap the format specifiers — use `%s` for the integer and `%d` for the name string. Does it compile? Does it run? What does the output look like, and what does this reveal about how `printf` handles its arguments at runtime?
+Set a conditional breakpoint on the `return` line of `simulate_fuel_sensor()` that only triggers when the return value is greater than `initial_level` (which it always is, given the sign error). What condition expression did you enter in VS Code? Explain why this is more efficient than an unconditional breakpoint when `simulate_fuel_sensor()` is called in a loop — for example, once per second over a 10-minute mission.
 
 ---
 
 ## 💭 Thought pieces for the next branch
 
-1. The boot sequence prints static values. If a sensor reading were wrong, how would we find where the fault originates — especially if there are no error messages?
-2. The command prompt uses `scanf`. What happens if the user types something that doesn't match the format specifier?
-3. If the compile step fails with a linker error rather than a compiler error, where does the bug live — in the source file or somewhere else?
+1. The buggy function uses `int` for sensor values. Is `int` always the same size on every platform? What breaks if we depend on that assumption on a 16-bit MCU?
+2. When `printf` sees `%d`, how does it know how many bytes to read from the argument? What would happen if the format specifier and the actual type did not match in size?
+3. The off-by-one caused a value to inflate rather than wrap around — but on real embedded hardware, what are the consequences of silent integer overflow in a fuel sensor reading?
 
 ---
 
-*Previous branch: [`main`]*
-*Next branch: [`phase-02_debugging`]*
+*Previous branch: [`phase-01_boot-and-io`]*
+*Next branch: [`phase-03_integer-types`]*
