@@ -211,7 +211,19 @@ Discrepancy          : 105 kg
 WARNING: fuel sensor mismatch detected. Investigate before launch.
 ```
 
-**For VS Code debugging:** Open the repo folder in VS Code with the C/C++ extension installed. Set a breakpoint by clicking in the gutter next to any line, then press `F5` to launch the debugger.
+**Setting up the VS Code debugger (first time only)**
+
+1. Install the **C/C++** extension by Microsoft (`ms-vscode.cpptools`) from the Extensions panel
+2. Run the CMake configure step if you haven't already:
+   ```bash
+   cmake -B build
+   ```
+3. Open the repo folder in VS Code (`File → Open Folder`)
+4. Click in the left gutter next to any line in `main.c` to set a breakpoint — a red dot appears
+5. Press `F5` (or `Run → Start Debugging`) and select **Debug Calypso (Windows / MSVC)** from the dropdown — or the Linux/macOS variant if applicable
+6. VS Code builds the project automatically, then launches the debugger and pauses at your breakpoint
+
+The integrated terminal opens for `scanf` input — type your command character and crew ID there when prompted. Use `F10` to step over one line at a time and watch the **Variables** panel update on the left.
 
 ---
 
