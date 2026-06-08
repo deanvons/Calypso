@@ -183,7 +183,7 @@ The program prints the boot banner, prompts for a single character, echoes it, a
 `return 0` in `main()` tells the OS the program exited cleanly. If Calypso encountered a fault — say `scanf` failed to read anything useful — what value would you return instead, and how would an operator script detect that the flight computer shut down abnormally?
 
 **Challenge 3 — Additive**
-Replace the command echo with a conditional response: if the operator types `'s'`, print `"CALYPSO: all systems nominal"`; if they type `'q'`, print a shutdown message and `return` from `main()`; for any other character, print `"Unknown command."`. Use `if` / `else if` / `else` to handle each case.
+Add a confirmation step after the command echo: prompt the operator to enter their crew ID as a single character, then print it back using `printf` and `%c`. You will need a second `char` variable, a second `printf` for the prompt, and a second `scanf` with the address-of operator — the same pattern as the first read, applied again.
 
 **Challenge 4 — Analytical**
 The boot banner shows the build date via `__DATE__` — a value fixed at compile time. Calypso is designed to run for months without recompiling. What is the problem with a compile-time date in a long-running flight computer, and what runtime mechanism would give you the actual start time instead?
