@@ -8,7 +8,7 @@ See [docs/PRD.md](docs/PRD.md) for the full product brief.
 
 ---
 
-## Prerequisites
+## 🔧 Prerequisites
 
 - GCC or Clang (C99 or later)
 - CMake 3.10 or later
@@ -16,7 +16,7 @@ See [docs/PRD.md](docs/PRD.md) for the full product brief.
 
 ---
 
-## Build and run
+## ▶️ Build and run
 
 ```bash
 mkdir build
@@ -29,7 +29,7 @@ cmake --build build
 
 ---
 
-## Branch sequence
+## 📍 Branch sequence
 
 | Branch | What it introduces | Abstraction level |
 |---|---|---|
