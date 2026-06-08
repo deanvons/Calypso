@@ -4,7 +4,7 @@ int main(void) {
     printf("=========================================\n");
     printf("  CALYPSO FLIGHT COMPUTER\n");
     printf("  Shuttle designation : CALYPSO-7\n");
-    printf("  Build date          : %s\n", __DATE__); // NOTE: predefined preprocessor macro — covered in phase-15
+    printf("  Build date          : %s\n", __DATE__); // NOTE: predefined preprocessor macro - covered in phase-15
     printf("=========================================\n\n");
 
     printf("Calypso online. Enter command.\n\n");
@@ -19,7 +19,7 @@ int main(void) {
      * any whitespace left in stdin from previous input.
      */
     scanf(" %c", &cmd);
-    printf("Command received: %c — standing by.\n", cmd);
+    printf("Command received: %c - standing by.\n", cmd);
 
     return 0;
 }
