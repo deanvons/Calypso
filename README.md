@@ -98,7 +98,7 @@ We use `printf` and `scanf` from `<stdio.h>` rather than any higher-level I/O he
 ## 🎯 What we're doing in this branch
 
 - Replace the scaffold `main.c` with a boot banner that prints the shuttle designation and build date using `printf` with format specifiers
-- Add a command prompt loop that reads a single character from the operator using `scanf` and the address-of operator
+- Add a command prompt that reads a single character from the operator using `scanf` and the address-of operator
 - Echo the entered command back with a status string using the `%c` format specifier
 - Demonstrate the full compile-and-run workflow from a single source file to an executing binary
 
@@ -118,7 +118,7 @@ We use `printf` and `scanf` from `<stdio.h>` rather than any higher-level I/O he
 
 ### Apply
 - **Compile** `main.c` from the command line — invoke `gcc` or `clang` directly and confirm the resulting `calypso` binary runs
-- **Use** `printf()` with `%s`, `%c`, and `%d` format specifiers to produce the boot banner and echo operator commands
+- **Use** `printf()` with `%s` and `%c` format specifiers to produce the boot banner and echo operator commands
 - **Use** `scanf()` with `%c` and the address-of operator to read a single command character from the operator
 
 ---
@@ -183,7 +183,7 @@ The program prints the boot banner, prompts for a single character, echoes it, a
 `return 0` in `main()` tells the OS the program exited cleanly. If Calypso encountered a fault — say `scanf` failed to read anything useful — what value would you return instead, and how would an operator script detect that the flight computer shut down abnormally?
 
 **Challenge 3 — Additive**
-Add two commands to the prompt: `'s'` prints `"CALYPSO: all systems nominal"`, and `'q'` prints a shutdown message and returns from `main()`. Any other input should print `"Unknown command."`. Keep the loop running until `'q'` is entered.
+Replace the command echo with a conditional response: if the operator types `'s'`, print `"CALYPSO: all systems nominal"`; if they type `'q'`, print a shutdown message and `return` from `main()`; for any other character, print `"Unknown command."`. Use `if` / `else if` / `else` to handle each case.
 
 **Challenge 4 — Analytical**
 The boot banner shows the build date via `__DATE__` — a value fixed at compile time. Calypso is designed to run for months without recompiling. What is the problem with a compile-time date in a long-running flight computer, and what runtime mechanism would give you the actual start time instead?
