@@ -154,7 +154,21 @@ Both techniques are introduced in this phase, but `printf` tracing comes first f
 
 ## 🔍 What to notice in the code
 
-*Completed after code is written.*
+**[`main.c` — the sensor simulation block](main.c)**
+The `simulate_fuel_sensor` block sits above `main()`. It has two `DELIBERATE` comments marking the exact lines that contain the bugs, but do not read them yet — try to locate the bugs through tracing first. The block takes three `int` values and returns one. The inputs and the return value are all you can see from `main()`.
+
+**[`main.c` — the discrepancy output in `main()`](main.c)**
+The three `printf` calls after the sensor calculation print the raw reading, the arithmetic result you would expect if the calculation were correct, and the difference between them. The discrepancy of 105 kg — with a tank capacity of 1000 kg — is the signal that something is wrong. The trace you add in Challenge 3 goes in `main()` around these same lines, printing the inputs before the calculation and `fuel_reading` after it.
+
+**How to add a printf trace (for Challenge 3)**
+Add a `printf` before the sensor calculation to print `initial_fuel`, `burn_rate_ks`, and `elapsed`:
+```c
+printf("DEBUG: inputs -- initial=%d  burn_rate=%d  elapsed=%d\n", initial_fuel, burn_rate_ks, elapsed);
+```
+Then look at what comes back in `fuel_reading`. The inputs are correct — the bug is in the calculation itself, not in how `main()` calls it. The trace from `main()` can tell you that; it cannot tell you which intermediate value inside the calculation is wrong first. That is where the debugger takes over.
+
+**How to use the VS Code debugger (for Challenges 4 and 5)**
+Open `main.c` in VS Code. Click in the left gutter next to the first line of the `simulate_fuel_sensor` block to set a breakpoint. Press `F5` to start a debug session (select "C/C++: cl.exe build and debug active file" if prompted, or use the existing launch configuration). Execution pauses at the breakpoint. Use `F10` (step over) to advance one line at a time and watch the **Variables** panel update. Use the **Call Stack** panel to see how execution arrived at the current line. To set a conditional breakpoint: right-click the breakpoint dot and choose "Edit Breakpoint", then enter a condition expression such as `consumed > initial_level`.
 
 ---
 
@@ -168,7 +182,36 @@ The bugs in the fuel sensor simulation use `int` for every value — initial lev
 
 ## ▶️ Running this branch
 
-*Completed after code is written.*
+**Prerequisites:** GCC or Clang (C99+) and CMake 3.10+, or just GCC/Clang on its own.
+
+**With CMake (recommended):**
+```bash
+cmake -B build
+cmake --build build
+.\build\Debug\calypso.exe   # Windows (MSVC)
+.\build\calypso.exe         # Windows (MinGW)
+./build/calypso             # Linux / macOS
+```
+
+**Direct compilation (no CMake):**
+```bash
+gcc main.c -o calypso
+./calypso
+```
+
+The program prints the boot banner, runs the sensor suite check, shows the discrepancy, then prompts for a command character and a crew ID. Press any key followed by Enter at each prompt.
+
+**Expected output (sensor section):**
+```
+--- Sensor Status ---
+Fuel sensor reading  : 1055 kg
+Expected fuel level  : 950 kg
+Discrepancy          : 105 kg
+
+WARNING: fuel sensor mismatch detected. Investigate before launch.
+```
+
+**For VS Code debugging:** Open the repo folder in VS Code with the C/C++ extension installed. Set a breakpoint by clicking in the gutter next to any line, then press `F5` to launch the debugger.
 
 ---
 
