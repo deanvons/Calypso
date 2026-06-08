@@ -92,19 +92,19 @@ A linker error means the source compiled successfully but the linker could not f
 
 ## 💡 Why we made this decision
 
-### Introduce deliberate bugs rather than asking students to imagine them
+### Introduce deliberate bugs rather than asking you to imagine them
 
-A student who has only ever written working code has no practice investigating misbehaving code. The natural impulse is to stare at the source until the bug becomes obvious — which works when the codebase is ten lines long and fails completely when it is not. The only way to develop systematic debugging instincts is to practise them on real misbehaving code. Introducing a deliberately-broken function in Phase 2, before the codebase grows complex, means students have investigation skills when they genuinely need them in later phases.
+If you have only ever written working code, you have no practice investigating misbehaving code. The natural impulse is to stare at the source until the bug becomes obvious — which works when the codebase is ten lines long and fails completely when it is not. The only way to develop systematic debugging instincts is to practise them on real misbehaving code. A deliberately-broken function here, before the codebase grows complex, means you have these investigation skills when you genuinely need them in later phases.
 
-The two bugs chosen — an off-by-one and a sign error — are the most common classes of logical error in numerical code. The sign error (adding consumed instead of subtracting it) is the kind of bug that often slips through code review because the arithmetic looks plausible at a glance. The off-by-one (inflating the burn period by one extra cycle) is subtle enough that a reader checking the logic step-by-step might miss it on the first pass. Together they give students a realistic experience of debugging that requires more than visual inspection.
+The two bugs chosen — an off-by-one and a sign error — are the most common classes of logical error in numerical code. The sign error (adding consumed instead of subtracting it) is the kind of bug that often slips through code review because the arithmetic looks plausible at a glance. The off-by-one (inflating the burn period by one extra cycle) is subtle enough that checking the logic step-by-step you might miss it on the first pass. Together they give you a realistic experience of debugging that requires more than visual inspection.
 
 ### Leave the bugs unfixed
 
-Fixing `simulate_fuel_sensor()` here would blur two separate lessons. Phase 2 is about finding bugs — the investigation process. Phase 3 is about choosing the right integer types so that certain classes of bug become impossible. If we fix the bugs in Phase 2, we lose the concrete motivation for Phase 3: students would not feel the problem that `int`-everywhere creates. The unfixed bugs are not an oversight — they are the setup for the next phase's question: "would the right type have prevented this?"
+Fixing `simulate_fuel_sensor()` here would blur two separate lessons. Phase 2 is about finding bugs — the investigation process. Phase 3 is about choosing the right integer types so that certain classes of bug become impossible. If we fix the bugs here, you lose the concrete motivation for Phase 3: you would not feel the problem that `int`-everywhere creates. The unfixed bugs are not an oversight — they are the setup for the next phase's question: "would the right type have prevented this?"
 
 ### `printf` tracing before the interactive debugger
 
-Both techniques are introduced in this phase, but `printf` tracing comes first for two reasons. First, it requires only what students already know — `printf` from Phase 1. Second, it is the technique that works everywhere: on desktop programs, inside embedded firmware, in situations where no interactive debugger is available. The VS Code debugger is more powerful and more efficient for desktop code, but students who understand printf tracing first will never be helpless in an environment where the debugger is not an option.
+Both techniques are introduced in this phase, but `printf` tracing comes first for two reasons. First, it requires only what you already know — `printf` from Phase 1. Second, it is the technique that works everywhere: on desktop programs, inside embedded firmware, in situations where no interactive debugger is available. The VS Code debugger is more powerful and more efficient for desktop code, but if you understand printf tracing first you will never be helpless in an environment where the debugger is not an option.
 
 ---
 
