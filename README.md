@@ -116,10 +116,10 @@ Both techniques are introduced in this phase, but `printf` tracing comes first f
 
 ## 🎯 What we're doing in this branch
 
-- Add the fuel sensor simulation to `main.c` — code that should compute remaining fuel level but contains an off-by-one and a sign error that cause it to misreport
-- Call the function from `main()` and print both the sensor reading and the expected value so the discrepancy is immediately visible
-- Walk through `printf`-trace debugging in the README: adding intermediate `printf` calls inside the function to expose where the wrong value first appears
-- Walk through the VS Code debugger in the README: setting a breakpoint inside the function, stepping line by line, and inspecting the call stack and variable values
+- Add the fuel sensor simulation to `main.c` as inline code — variables and arithmetic that should compute remaining fuel level but contain an off-by-one and a sign error that cause the reading to misreport
+- Print both the sensor reading and the expected value so the discrepancy is immediately visible on every run
+- Walk through `printf`-trace debugging in the README: adding `printf` calls around the buggy variables to expose where the wrong value first appears
+- Walk through the VS Code debugger in the README: setting a breakpoint on the sensor calculation, stepping line by line, and inspecting variable values as they change
 
 ---
 
@@ -146,7 +146,7 @@ Both techniques are introduced in this phase, but `printf` tracing comes first f
 | **Undefined behaviour** | A situation the C standard makes no promise about — the program may crash, produce garbage output, or appear to work correctly depending on the platform, compiler version, and phase of the moon. It is more dangerous than a logical error because it may be invisible until it causes a failure in production. |
 | **`printf` tracing** | Temporarily inserting `printf` calls at key points in the code to print variable values and confirm which paths execute. Works anywhere C runs; no tools required. |
 | **Breakpoint** | A marker on a source line that tells the debugger to pause execution when it reaches that line, letting you inspect the program's state before it continues. |
-| **Call stack** | The ordered list of active code blocks that got execution to its current point — each frame shows where control came from and what values were in scope at that moment. |
+| **Call stack** | The record of where execution currently is and how it got there. In this phase it shows a single frame — `main()` — but it becomes more useful in later phases when code is split across multiple blocks. |
 | **Conditional breakpoint** | A breakpoint that only triggers when a specified Boolean condition is true. Useful when a bug only manifests after many calls or when a particular value is reached. |
 | **Step over / step into** | Two debugger navigation commands. Step over executes the current line and moves to the next without descending into any function it calls. Step into descends into the called function so you can trace its execution line by line. |
 
@@ -154,21 +154,21 @@ Both techniques are introduced in this phase, but `printf` tracing comes first f
 
 ## 🔍 What to notice in the code
 
-**[`main.c` — the sensor simulation block](main.c)**
-The `simulate_fuel_sensor` block sits above `main()`. It has two `DELIBERATE` comments marking the exact lines that contain the bugs, but do not read them yet — try to locate the bugs through tracing first. The block takes three `int` values and returns one. The inputs and the return value are all you can see from `main()`.
+**[`main.c` — the sensor calculation block](main.c)**
+The two `DELIBERATE` comments mark the exact lines that contain the bugs — but try to locate them through tracing first before reading the comments. All variables (`initial_fuel`, `burn_rate`, `elapsed`, `consumed`, `fuel_reading`) are in scope in `main()`, so a printf trace or a debugger breakpoint anywhere in this block can see all of them.
 
-**[`main.c` — the discrepancy output in `main()`](main.c)**
-The three `printf` calls after the sensor calculation print the raw reading, the arithmetic result you would expect if the calculation were correct, and the difference between them. The discrepancy of 105 kg — with a tank capacity of 1000 kg — is the signal that something is wrong. The trace you add in Challenge 3 goes in `main()` around these same lines, printing the inputs before the calculation and `fuel_reading` after it.
+**[`main.c` — the discrepancy output](main.c)**
+The three `printf` calls after the calculation print the raw reading, the expected result, and the difference. A discrepancy of 105 kg on a 1000 kg tank — with the reading exceeding the full tank capacity — is the signal that something is wrong. The printf trace you add in Challenge 3 goes just before the calculation, printing the three input variables so you can confirm whether the bug is in the inputs or in the arithmetic.
 
 **How to add a printf trace (for Challenge 3)**
-Add a `printf` before the sensor calculation to print `initial_fuel`, `burn_rate_ks`, and `elapsed`:
+Add a `printf` immediately before the `consumed` line to print `initial_fuel`, `burn_rate`, and `elapsed`:
 ```c
-printf("DEBUG: inputs -- initial=%d  burn_rate=%d  elapsed=%d\n", initial_fuel, burn_rate_ks, elapsed);
+printf("DEBUG: initial=%d  burn_rate=%d  elapsed=%d\n", initial_fuel, burn_rate, elapsed);
 ```
-Then look at what comes back in `fuel_reading`. The inputs are correct — the bug is in the calculation itself, not in how `main()` calls it. The trace from `main()` can tell you that; it cannot tell you which intermediate value inside the calculation is wrong first. That is where the debugger takes over.
+The inputs are correct — that tells you the bug is in the arithmetic, not in the values going into it. A trace from outside the calculation can confirm that; the debugger then lets you watch each variable change line by line to see which one goes wrong first.
 
 **How to use the VS Code debugger (for Challenges 4 and 5)**
-Open `main.c` in VS Code. Click in the left gutter next to the first line of the `simulate_fuel_sensor` block to set a breakpoint. Press `F5` to start a debug session (select "C/C++: cl.exe build and debug active file" if prompted, or use the existing launch configuration). Execution pauses at the breakpoint. Use `F10` (step over) to advance one line at a time and watch the **Variables** panel update. Use the **Call Stack** panel to see how execution arrived at the current line. To set a conditional breakpoint: right-click the breakpoint dot and choose "Edit Breakpoint", then enter a condition expression such as `consumed > initial_level`.
+Open `main.c` in VS Code. Click in the left gutter next to the `consumed` line to set a breakpoint. Press `F5` to start a debug session (select "C/C++: cl.exe build and debug active file" if prompted). Execution pauses at the breakpoint. Use `F10` (step over) to advance one line at a time and watch the **Variables** panel update after each step. To set a conditional breakpoint: right-click the breakpoint dot, choose "Edit Breakpoint", and enter a condition such as `fuel_reading > initial_fuel`.
 
 ---
 
@@ -227,10 +227,10 @@ You have two tools: `printf` tracing and the VS Code debugger. For each of the f
 Add `printf` calls to `main()` — before the sensor calculation to print the three input values (`initial_fuel`, `burn_rate`, `elapsed`), and after it to print `fuel_reading` alongside the expected result. Run the program and use that output to explain what the trace confirms: are the inputs correct, and does the output match what correct arithmetic would produce? What can you conclude from `main()` alone, and what can you not yet determine?
 
 **Challenge 4 — Analytical**
-In the VS Code debugger, set a breakpoint on the first line of the sensor calculation and step through to the last line. Open the call stack panel. What information does it show you that the `printf` trace from Challenge 3 did not? Name one debugging question that the call stack answers that `printf` tracing cannot answer efficiently.
+Set a breakpoint on the first line of the sensor calculation in VS Code and step through each line. After each step, look at the Variables panel. What can you observe about `consumed` and `fuel_reading` that the `printf` trace from Challenge 3 did not show you? Name one thing the interactive debugger lets you do that `printf` tracing cannot do without modifying and recompiling the code.
 
 **Challenge 5 — Additive (stretch)**
-Set a conditional breakpoint on the last line of the sensor calculation that only triggers when the result is greater than `initial_level` (which it always is, given the sign error). What condition expression did you enter in VS Code? Explain why this is more efficient than an unconditional breakpoint when the same sensor read is performed many times in sequence — for example, once per second over a 10-minute mission.
+Set a conditional breakpoint on the `fuel_reading` line that only triggers when `fuel_reading` would exceed `initial_fuel` (which it always is, given the sign error). What condition expression did you enter in VS Code? Explain why this is more efficient than an unconditional breakpoint when the same sensor read is performed many times in sequence — for example, once per second over a 10-minute mission.
 
 ---
 

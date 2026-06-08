@@ -1,15 +1,5 @@
 #include <stdio.h>
 
-/*
- * DELIBERATE: two bugs are present in this sensor simulation for Phase 2
- * debugging practice. Use printf tracing or the VS Code debugger to find them.
- * Bug 1: off-by-one. Bug 2: sign error. Do not fix them -- the investigation is the lesson.
- */
-int simulate_fuel_sensor(int initial_level, int burn_rate, int elapsed_seconds) {
-    int consumed = burn_rate * (elapsed_seconds + 1);  /* DELIBERATE (Bug 1 - off-by-one): should be elapsed_seconds */
-    return initial_level + consumed;                   /* DELIBERATE (Bug 2 - sign error): should be initial_level - consumed */
-}
-
 int main(void) {
     printf("=========================================\n");
     printf("  CALYPSO FLIGHT COMPUTER\n");
@@ -37,11 +27,16 @@ int main(void) {
     printf("Calypso online. Initialising sensor suite.\n\n");
 
     int initial_fuel = 1000;  /* kg -- full tank at launch */
-    int burn_rate_ks = 5;     /* kg per second at cruise thrust */
+    int burn_rate    = 5;     /* kg per second at cruise thrust */
     int elapsed      = 10;    /* seconds since engine ignition */
 
-    int fuel_reading = simulate_fuel_sensor(initial_fuel, burn_rate_ks, elapsed);
-    int expected     = initial_fuel - burn_rate_ks * elapsed;
+    /* DELIBERATE (Bug 1 - off-by-one): should be burn_rate * elapsed */
+    int consumed     = burn_rate * (elapsed + 1);
+
+    /* DELIBERATE (Bug 2 - sign error): should be initial_fuel - consumed */
+    int fuel_reading = initial_fuel + consumed;
+
+    int expected     = initial_fuel - burn_rate * elapsed;
 
     printf("--- Sensor Status ---\n");
     printf("Fuel sensor reading  : %d kg\n", fuel_reading);
