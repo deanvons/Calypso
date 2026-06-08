@@ -33,7 +33,7 @@ cmake --build build
 
 | Branch | What it introduces | Abstraction level |
 |---|---|---|
-| `main` | Project scaffold — compiles and runs | Scaffold only |
+| `📌 main` | Project scaffold — compiles and runs | Scaffold only |
 | `phase-01_boot-and-io` | First program · `printf` / `scanf` · compilation model | Raw I/O |
 | `phase-02_debugging` | `printf`-trace debugging · VS Code debugger · breakpoints | — |
 | `phase-03_integer-types` | `stdint.h` fixed-width types · `PRIu16` format specifiers · overflow guards | — |
