@@ -2,11 +2,11 @@
 
 > **Phase 02 — Debugging C Programs** | Calypso · Core C
 
-The flight computer's fuel sensor is misreporting values — two bugs are hiding in a function that compiles cleanly, runs without crashing, and gives a confident wrong answer.
+The flight computer's fuel sensor is misreporting values — two bugs are hiding in sensor calculation code that compiles cleanly, runs without crashing, and gives a confident wrong answer.
 
-Before Calypso can fly, its sensor readings must be trustworthy. This phase introduces the two most important tools for finding bugs that the compiler cannot catch: printf-trace debugging and the VS Code interactive debugger. A deliberately-broken `simulate_fuel_sensor()` function gives you a real target to investigate — the wrong output is visible, the cause is not. The lesson is the investigation process itself; the bugs are left unfixed because fixing them requires knowledge of integer types that Phase 3 will introduce.
+Before Calypso can fly, its sensor readings must be trustworthy. This phase introduces the two most important tools for finding bugs that the compiler cannot catch: printf-trace debugging and the VS Code interactive debugger. A deliberately-broken fuel sensor simulation gives you a real target to investigate — the wrong output is visible, the cause is not. The lesson is the investigation process itself; the bugs are left unfixed because fixing them requires knowledge of integer types that Phase 3 will introduce.
 
-> **A note on scope.** This phase is about finding bugs, not fixing them. The `simulate_fuel_sensor()` function contains deliberate defects that will be corrected in Phase 3. Resist the temptation to fix the code here — the goal is to practice systematic investigation, not to patch the symptom.
+> **A note on scope.** This phase is about finding bugs, not fixing them. The fuel sensor simulation contains deliberate defects that will be corrected in Phase 3. Resist the temptation to fix the code here — the goal is to practise systematic investigation, not to patch the symptom.
 
 ---
 
@@ -100,7 +100,7 @@ The two bugs chosen — an off-by-one and a sign error — are the most common c
 
 ### Leave the bugs unfixed
 
-Fixing `simulate_fuel_sensor()` here would blur two separate lessons. Phase 2 is about finding bugs — the investigation process. Phase 3 is about choosing the right integer types so that certain classes of bug become impossible. If we fix the bugs here, you lose the concrete motivation for Phase 3: you would not feel the problem that `int`-everywhere creates. The unfixed bugs are not an oversight — they are the setup for the next phase's question: "would the right type have prevented this?"
+Fixing the fuel sensor simulation here would blur two separate lessons. Phase 2 is about finding bugs — the investigation process. Phase 3 is about choosing the right integer types so that certain classes of bug become impossible. If we fix the bugs here, you lose the concrete motivation for Phase 3: you would not feel the problem that `int`-everywhere creates. The unfixed bugs are not an oversight — they are the setup for the next phase's question: "would the right type have prevented this?"
 
 ### `printf` tracing before the interactive debugger
 
@@ -116,7 +116,7 @@ Both techniques are introduced in this phase, but `printf` tracing comes first f
 
 ## 🎯 What we're doing in this branch
 
-- Add `simulate_fuel_sensor()` to `main.c` — a function that should return remaining fuel level but contains an off-by-one and a sign error that cause it to misreport
+- Add the fuel sensor simulation to `main.c` — code that should compute remaining fuel level but contains an off-by-one and a sign error that cause it to misreport
 - Call the function from `main()` and print both the sensor reading and the expected value so the discrepancy is immediately visible
 - Walk through `printf`-trace debugging in the README: adding intermediate `printf` calls inside the function to expose where the wrong value first appears
 - Walk through the VS Code debugger in the README: setting a breakpoint inside the function, stepping line by line, and inspecting the call stack and variable values
@@ -146,7 +146,7 @@ Both techniques are introduced in this phase, but `printf` tracing comes first f
 | **Undefined behaviour** | A situation the C standard makes no promise about — the program may crash, produce garbage output, or appear to work correctly depending on the platform, compiler version, and phase of the moon. It is more dangerous than a logical error because it may be invisible until it causes a failure in production. |
 | **`printf` tracing** | Temporarily inserting `printf` calls at key points in the code to print variable values and confirm which paths execute. Works anywhere C runs; no tools required. |
 | **Breakpoint** | A marker on a source line that tells the debugger to pause execution when it reaches that line, letting you inspect the program's state before it continues. |
-| **Call stack** | The ordered list of function calls that are currently active — the sequence of frames that got execution to its current point. When paused inside `simulate_fuel_sensor()`, the call stack shows that `main()` called it and what arguments were passed. |
+| **Call stack** | The ordered list of active code blocks that got execution to its current point — each frame shows where control came from and what values were in scope at that moment. |
 | **Conditional breakpoint** | A breakpoint that only triggers when a specified Boolean condition is true. Useful when a bug only manifests after many calls or when a particular value is reached. |
 | **Step over / step into** | Two debugger navigation commands. Step over executes the current line and moves to the next without descending into any function it calls. Step into descends into the called function so you can trace its execution line by line. |
 
@@ -160,7 +160,7 @@ Both techniques are introduced in this phase, but `printf` tracing comes first f
 
 ## 🔗 What this phase revealed
 
-The bugs in `simulate_fuel_sensor()` use `int` for every value — initial level, burn rate, elapsed time, consumed fuel. `int` is platform-dependent in width: on a 16-bit MCU it may be 2 bytes, giving a maximum value of 32,767. A fuel reading that exceeds that limit wraps around silently. The sign error that causes fuel to increase rather than decrease is a logical error; the overflow that would occur if we tried to represent a realistic fuel mass in a 16-bit `int` is a category of silent data corruption that the current type selection cannot prevent.
+The bugs in the fuel sensor simulation use `int` for every value — initial level, burn rate, elapsed time, consumed fuel. `int` is platform-dependent in width: on a 16-bit MCU it may be 2 bytes, giving a maximum value of 32,767. A fuel reading that exceeds that limit wraps around silently. The sign error that causes fuel to increase rather than decrease is a logical error; the overflow that would occur if we tried to represent a realistic fuel mass in a 16-bit `int` is a category of silent data corruption that the current type selection cannot prevent.
 
 > **LEARNING MOMENT:** Using `int` for sensor values is not a neutral default — it is a choice with consequences. The right type for a sensor value depends on the platform, the value range, and what must happen when the value exceeds that range. That is exactly what Phase 3 introduces.
 
@@ -181,13 +181,13 @@ The simulation reports a fuel level higher than the full tank and rising. Before
 You have two tools: `printf` tracing and the VS Code debugger. For each of the following scenarios, identify which tool you would reach for first and explain why: (a) a calculation that runs 10,000 times and only produces the wrong result on iteration 9,347; (b) firmware running on a bare-metal MCU with no OS and no debugger port available.
 
 **Challenge 3 — Additive**
-Add `printf` calls to `main()` — before the `simulate_fuel_sensor()` call to print the three input values (`initial_fuel`, `burn_rate`, `elapsed`), and after it to print `fuel_reading` alongside the expected result. Run the program and use that output to explain what the trace confirms: are the inputs correct, and does the output match what correct arithmetic would produce? What can you conclude from `main()` alone, and what can you not yet determine?
+Add `printf` calls to `main()` — before the sensor calculation to print the three input values (`initial_fuel`, `burn_rate`, `elapsed`), and after it to print `fuel_reading` alongside the expected result. Run the program and use that output to explain what the trace confirms: are the inputs correct, and does the output match what correct arithmetic would produce? What can you conclude from `main()` alone, and what can you not yet determine?
 
 **Challenge 4 — Analytical**
-In the VS Code debugger, set a breakpoint on the first line inside `simulate_fuel_sensor()` and step through to the `return` statement. Open the call stack panel. What information does it show you that the `printf` trace from Challenge 3 did not? Name one debugging question that the call stack answers that `printf` tracing cannot answer efficiently.
+In the VS Code debugger, set a breakpoint on the first line of the sensor calculation and step through to the last line. Open the call stack panel. What information does it show you that the `printf` trace from Challenge 3 did not? Name one debugging question that the call stack answers that `printf` tracing cannot answer efficiently.
 
 **Challenge 5 — Additive (stretch)**
-Set a conditional breakpoint on the `return` line of `simulate_fuel_sensor()` that only triggers when the return value is greater than `initial_level` (which it always is, given the sign error). What condition expression did you enter in VS Code? Explain why this is more efficient than an unconditional breakpoint when the same sensor read is performed many times in sequence — for example, once per second over a 10-minute mission.
+Set a conditional breakpoint on the last line of the sensor calculation that only triggers when the result is greater than `initial_level` (which it always is, given the sign error). What condition expression did you enter in VS Code? Explain why this is more efficient than an unconditional breakpoint when the same sensor read is performed many times in sequence — for example, once per second over a 10-minute mission.
 
 ---
 
