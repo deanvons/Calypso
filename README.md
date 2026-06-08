@@ -70,9 +70,13 @@ The Calypso flight computer will eventually span multiple modules — sensors, e
 
 The sequence — preprocessor → compiler → linker → executable — is a data flow that drives every build in this repo. Making it visible once, at the start, means every subsequent phase can refer back to it without re-explaining it.
 
+This repo uses CMake as its build system generator. CMake is not a compiler — it is a layer above the compilation pipeline. It reads `CMakeLists.txt` and generates the platform-appropriate build instructions (a `Makefile` on Linux and macOS, a `ninja.build` or MSVC project on Windows). When you run `cmake --build build`, CMake invokes the real compiler — `gcc` or `clang` — with the correct flags and source files. The pipeline below still runs exactly as described; CMake just automates the invocation. You can verify this directly: `gcc main.c -o calypso` compiles the scaffold without CMake and produces the same binary.
+
 ```mermaid
 flowchart LR
-    A["main.c"] -->|preprocessor| B["preprocessed C"]
+    Z["CMakeLists.txt"] -->|"cmake -B build"| Y["Makefile /\nninja.build"]
+    Y -->|"cmake --build"| A["main.c"]
+    A -->|preprocessor| B["preprocessed C"]
     B -->|compiler| C["main.o"]
     C -->|linker| D["calypso"]
     E["stdio.h"] -.->|"#include"| A
