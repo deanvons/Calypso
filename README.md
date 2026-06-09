@@ -187,7 +187,23 @@ The fix is to ensure at least one operand is a float type before the division ta
 
 ## 🔍 What to notice in the code
 
-_Completed after code is written._
+**[`main.c` — burn rate and integer division demo](main.c)**
+The `burn_rate_kgs` line shows the explicit cast pattern: `(sensor_float_t)consumed_kg / mission_elapsed_s`. The two `demo_a / demo_b` lines immediately below it exist specifically because `50 / 10` divides evenly — the truncation would be invisible with those values. With `7 / 2`, integer division produces `3` and float division produces `3.5`, making the difference concrete.
+
+**[`main.c` — `hours_to_dest` and operator precedence](main.c)**
+The block comment above `hours_to_dest` explains the precedence trap. `/` and `*` share equal precedence and associate left-to-right, so `distance / velocity * 3600` would evaluate as `(distance / velocity) * 3600` — giving a result in seconds, roughly 42 million hours. The parentheses around `(velocity_kms * 3600.0f)` force the multiplication first and produce the correct km / (km/h) form. This is the standard pattern for any formula where an intermediate product must be computed before a division.
+
+**[`main.c` — `approach_safe` with `&&`](main.c)**
+Both sub-expressions are wrapped in their own parentheses — `(velocity_kms <= 2.0f)` and `(fuel_level >= 50)` — before being combined with `&&`. The `printf` lines below it print each condition independently so you can see that velocity is `false` (32.70 > 2.0) and fuel is `true` (950 >= 50), confirming that `approach_safe` is `NO` and that the short-circuit fired after the first condition.
+
+**[`main.c` — `sizeof` usage](main.c)**
+`sizeof(sensor_float_t)` and `sizeof(double)` print `4` and `8` respectively, making the memory cost of the precision difference from Phase 4 visible. The cast to `(unsigned)` before the `%u` format specifier is a portability measure: `sizeof` returns `size_t`, which is 64 bits on most modern platforms and would mismatch a `%u` without the cast. The values are small enough (4 and 8) that the cast loses nothing.
+
+**[`main.c` — prefix vs postfix increment](main.c)**
+The results are assigned to `pre_val` and `post_val` rather than passed directly to `printf`. This matters: if both `++sensor_index` and `sensor_index` were arguments to the same `printf` call, the order of argument evaluation would be unspecified — that is undefined behaviour in C. Assigning first, then printing, keeps the evaluation order explicit and safe.
+
+**[`main.c` — compound assignment and modulo](main.c)**
+`total_fuel_used += consumed_kg` followed by `total_fuel_used += 15` accumulates 50 + 15 = 65 kg across two separate statements — the typical pattern for running totals. The `sensor_cycle % 4` block shows how modulo produces a periodic counter: `5 % 4 = 1` (skip) and `8 % 4 = 0` (update due), demonstrating both a non-zero and zero remainder in sequence.
 
 ---
 
@@ -201,7 +217,51 @@ By the end of this phase, the navigation section of `main.c` is a flat sequence 
 
 ## ▶️ Running this branch
 
-_Completed after code is written._
+**Prerequisites:** GCC or Clang (C99+) and CMake 3.10+, or just GCC/Clang on its own.
+
+**With CMake (recommended):**
+```bash
+cmake -B build
+cmake --build build
+.\build\Debug\calypso.exe   # Windows (MSVC)
+.\build\calypso.exe         # Windows (MinGW)
+./build/calypso             # Linux / macOS
+```
+
+**Direct compilation (no CMake):**
+```bash
+gcc -std=c99 main.c -o calypso
+./calypso
+```
+
+The program prints the boot banner, the full sensor suite (including the deliberate out-of-range fault messages), and then the navigation section. When prompted for a command and crew ID, enter any single character for each. The navigation output is the new section for this phase.
+
+**Expected navigation output:**
+```
+--- Navigation ---
+Burn rate            :   5.00 kg/s
+  int div  7 / 2     : 3    (truncated -- remainder discarded)
+  float div 7 / 2    : 3.5  (explicit cast preserves remainder)
+
+Hours to destination :     3.27 h
+
+Approach safe        : NO
+  velocity (32.70 km/s) <= 2.0   : false
+  fuel (950 kg) >= 50             : true
+
+Type sizes:
+  sizeof(sensor_float_t) = 4 bytes
+  sizeof(uint16_t)       = 2 bytes
+  sizeof(double)         = 8 bytes
+
+Prefix  ++sensor_index : result = 1, sensor_index = 1
+Postfix sensor_index++ : result = 0, sensor_index = 1
+
+Total fuel used      : 65 kg  (accumulated with +=)
+
+Sensor cycle = 5 : % 4 = 1  [skip]
+Sensor cycle = 8 : % 4 = 0  [update due]
+```
 
 ---
 
