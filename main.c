@@ -133,9 +133,24 @@ int main(void) {
     printf("Shuttle ID           : %s\n", shuttle_id);
     printf("COMMS:\t\'%s\' status nominal -- log: calypso\\flight.log\n\n", shuttle_id);
 
-    /* --- Sensor fault flag (bool) --------------------------------------- */
+    /* SOLUTION (Challenge 5): shuttle_id = "NEW-001" does not compile -- an array name is
+       not an assignable lvalue; it is the fixed address of the first element. An individual
+       element is a modifiable lvalue and can be assigned directly. */
+    shuttle_id[6] = '9'; /* change '7' to '9' */
+    printf("Shuttle ID (modified): %s\n\n", shuttle_id);
+
+    /* --- Sensor fault flag (bool) and cabin pressure sensor ------------- */
 
     bool sensor_fault = false;
+
+    // SOLUTION (Challenge 3): sensor_float_t printed with %10.3f; range check sets sensor_fault
+    sensor_float_t cabin_pressure_kpa = 101.325f;
+    printf("Cabin pressure       : %10.3f kPa\n", cabin_pressure_kpa);
+    if (cabin_pressure_kpa < 80.0f || cabin_pressure_kpa > 120.0f) {
+        sensor_fault = true;
+        printf("FAULT: cabin pressure (%.3f kPa) outside safe range [80.000, 120.000]\n",
+               cabin_pressure_kpa);
+    }
     printf("Sensor fault         : %s\n\n", sensor_fault ? "true" : "false");
 
     /* --- Mission phase (enum) ------------------------------------------ */
