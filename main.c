@@ -28,6 +28,10 @@ int main(void) {
     uint32_t mission_elapsed_s;
     mission_elapsed_s = 10; /* seconds of engine burn */
 
+    // SOLUTION (Challenge 5): second uint32_t sensor using the same two-step pattern
+    uint32_t total_burn_s;
+    total_burn_s = mission_elapsed_s; /* accumulated engine burn over the mission so far */
+
     uint16_t consumed_kg = (uint16_t)(BURN_RATE_KGS * mission_elapsed_s);
     uint16_t fuel_level  = TANK_CAPACITY_KG - consumed_kg; /* fixed: Phase 2 had + instead of - */
 
@@ -67,7 +71,23 @@ int main(void) {
     }
 
     printf("Engine temp delta    : %" PRId8 " K\n", engine_temp_delta);
-    printf("Mission elapsed      : %" PRIu32 " s\n\n", mission_elapsed_s);
+    printf("Mission elapsed      : %" PRIu32 " s\n", mission_elapsed_s);
+    printf("Total burn           : %" PRIu32 " s\n\n", total_burn_s);
+
+    /* --- Distance sensor ---------------------------------------- */
+
+    /*
+     * SOLUTION (Challenge 3): uint32_t distance sensor with PRIu32 format
+     * specifier and a range guard against half the type's maximum.
+     * 384 400 km is roughly the Earth–Moon distance -- well below
+     * UINT32_MAX / 2 (~2.1 billion), so the guard does not trigger here.
+     */
+    uint32_t distance_to_destination_km = 384400; /* km */
+    if (distance_to_destination_km > UINT32_MAX / 2) {
+        printf("FAULT: distance reading (%" PRIu32 ") exceeds UINT32_MAX / 2 (%" PRIu32 ")\n",
+               distance_to_destination_km, UINT32_MAX / 2);
+    }
+    printf("Distance to dest     : %" PRIu32 " km\n\n", distance_to_destination_km);
 
     /* --- Engine status register --------------------------------- */
 
