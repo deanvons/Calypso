@@ -175,6 +175,83 @@ int main(void) {
     printf("Engine status reg    : 0x%02X  (decimal: %u)\n\n",
            engine_status_reg, engine_status_reg);
 
+    /* --- Navigation calculations --------------------------------------- */
+
+    printf("--- Navigation ---\n");
+
+    /* Burn rate -- explicit cast forces float division.
+     * Without the cast, consumed_kg / mission_elapsed_s is integer / integer
+     * and truncates toward zero. The cast promotes the numerator to
+     * sensor_float_t before the division, making both operands float. */
+    sensor_float_t burn_rate_kgs = (sensor_float_t)consumed_kg / mission_elapsed_s;
+    printf("Burn rate            : %6.2f kg/s\n", burn_rate_kgs);
+
+    // NOTE: values 7 and 2 are chosen so truncation is visible; 50 / 10 divides evenly
+    uint32_t demo_a = 7, demo_b = 2;
+    printf("  int div  7 / 2     : %" PRIu32 "    (truncated -- remainder discarded)\n",
+           demo_a / demo_b);
+    printf("  float div 7 / 2    : %.1f  (explicit cast preserves remainder)\n\n",
+           (sensor_float_t)demo_a / demo_b);
+
+    /* Time to destination -- parentheses control evaluation order.
+     * / and * share equal precedence and associate left-to-right, so without
+     * parentheses distance / velocity * 3600 evaluates as
+     * (distance / velocity) * 3600 -- result in seconds, not hours.
+     * Parenthesising (velocity_kms * 3600.0f) forces the multiplication first,
+     * producing the correct distance / speed-in-kph form. */
+    sensor_float_t hours_to_dest = (sensor_float_t)distance_to_destination_km
+                                   / (velocity_kms * 3600.0f);
+    printf("Hours to destination : %8.2f h\n\n", hours_to_dest);
+
+    /* Approach safety -- relational and logical operators.
+     * Each parenthesised sub-expression produces 1 or 0 (int).
+     * && requires both to be true; short-circuit: if the first is false
+     * the second is not evaluated. */
+    bool approach_safe = (velocity_kms <= 2.0f) && (fuel_level >= 50);
+    printf("Approach safe        : %s\n", approach_safe ? "YES" : "NO");
+    printf("  velocity (%.2f km/s) <= 2.0   : %s\n",
+           velocity_kms, (velocity_kms <= 2.0f) ? "true" : "false");
+    printf("  fuel (%u kg) >= 50             : %s\n\n",
+           fuel_level, (fuel_level >= 50) ? "true" : "false");
+
+    /* sizeof -- compile-time operator: no code runs at runtime.
+     * Cast to unsigned so %u matches on both 32- and 64-bit size_t platforms;
+     * the values are small enough that no truncation occurs. */
+    printf("Type sizes:\n");
+    printf("  sizeof(sensor_float_t) = %u bytes\n", (unsigned)sizeof(sensor_float_t));
+    printf("  sizeof(uint16_t)       = %u bytes\n", (unsigned)sizeof(uint16_t));
+    printf("  sizeof(double)         = %u bytes\n\n", (unsigned)sizeof(double));
+
+    /* Prefix vs postfix increment.
+     * Prefix (++i): increments first, then provides the new value.
+     * Postfix (i++): provides the current value first, then increments.
+     * Assigning each result to a separate variable avoids UB from reading
+     * and modifying the same variable within one expression. */
+    uint8_t sensor_index = 0;
+    uint8_t pre_val = ++sensor_index; /* sensor_index becomes 1; pre_val = 1  */
+    printf("Prefix  ++sensor_index : result = %u, sensor_index = %u\n", pre_val, sensor_index);
+
+    sensor_index = 0;
+    uint8_t post_val = sensor_index++; /* post_val = 0; sensor_index becomes 1 */
+    printf("Postfix sensor_index++ : result = %u, sensor_index = %u\n\n", post_val, sensor_index);
+
+    /* Compound assignment (+=) -- accumulate total fuel used */
+    uint32_t total_fuel_used = 0;
+    total_fuel_used += consumed_kg; /* first burn period  */
+    total_fuel_used += 15;          /* second burn period */
+    printf("Total fuel used      : %" PRIu32 " kg  (accumulated with +=)\n\n", total_fuel_used);
+
+    /* Modulo (%) -- sensor cycle counter: update due every 4 cycles */
+    uint8_t sensor_cycle = 0;
+    sensor_cycle += 5;
+    printf("Sensor cycle = %u : %% 4 = %u  %s\n",
+           sensor_cycle, sensor_cycle % 4,
+           (sensor_cycle % 4 == 0) ? "[update due]" : "[skip]");
+    sensor_cycle += 3;
+    printf("Sensor cycle = %u : %% 4 = %u  %s\n\n",
+           sensor_cycle, sensor_cycle % 4,
+           (sensor_cycle % 4 == 0) ? "[update due]" : "[skip]");
+
     printf("Enter command: ");
     char cmd = '\0';
     scanf(" %c", &cmd);
