@@ -196,7 +196,20 @@ flowchart LR
 
 ## 🔍 What to notice in the code
 
-*Completed after code is written.*
+**[`main.c:31–47`](main.c#L31)**
+The register globals and named constants. `ENGINE_CTRL` and `ENGINE_STATUS` are plain `uint32_t` global variables — the "hardware register" abstraction is the naming and the operations, not a special type. The bit positions are `const uint8_t` variables rather than `#define` macros — `#define` is Phase 15; these serve the same readability purpose with the means available now. `THROTTLE_MASK = 0x0Fu` carries a comment explaining it is the mask applied after shifting — that note is load-bearing for Challenge 4.
+
+**[`main.c:314–328`](main.c#L314) — set and clear**
+The set (`|=`) and clear (`&=`) operations use the identical `1u << THRUSTER_N_BIT` mask construction — the only difference is the operator and, for clear, the `~` complement. Read the two lines side by side: `|=` with the mask sets the bit; `&=` with the complement clears it. The `printf` after each operation prints the full 32-bit register in hex so you can trace each bit change directly.
+
+**[`main.c:331–335`](main.c#L331) — toggle**
+Two consecutive XOR operations with the same mask. The first clears thruster 2 (which was set), the second restores it. Reading `0x00000074` → `0x00000070` → `0x00000074` in the output confirms that XOR is its own inverse — two applications with the same mask cancel out.
+
+**[`main.c:339`](main.c#L339) — throttle extraction**
+`(ENGINE_CTRL >> THROTTLE_SHIFT) & THROTTLE_MASK` is the two-step pattern: shift right by 4 to bring bits 4–7 into positions 0–3, then AND with `0x0F` to zero positions 4 and above. With `ENGINE_CTRL = 0x00000074`, shifting right by 4 gives `0x00000007`; masking gives `7`. This is what Challenge 4 asks you to trace in reverse order.
+
+**[`main.c:344–354`](main.c#L344) — STATUS fault test**
+The test expression `(ENGINE_STATUS & (1u << CRITICAL_FAULT_BIT)) != 0` isolates the target bit with AND, then the `!= 0` converts the integer result to `bool`. Both `SENSOR_FAULT_BIT` (bit 0) and `CRITICAL_FAULT_BIT` (bit 2) were set, so `ENGINE_STATUS = 0x00000005` — binary `0b00000101` — and both tests report "SET".
 
 ---
 
@@ -210,7 +223,42 @@ By the end of this phase, `main.c` contains the boot report, the full sensor sui
 
 ## ▶️ Running this branch
 
-*Completed after code is written.*
+**Prerequisites:** GCC or Clang (C99+) and CMake 3.10+, or just GCC/Clang on its own.
+
+**With CMake (recommended):**
+```bash
+cmake -B build
+cmake --build build
+.\build\Debug\calypso.exe   # Windows (MSVC)
+.\build\calypso.exe         # Windows (MinGW)
+./build/calypso             # Linux / macOS
+```
+
+**Direct compilation (no CMake):**
+```bash
+gcc -std=c99 main.c -o calypso
+./calypso
+```
+
+The program prints the boot banner, the full sensor suite, the navigation calculations from Phase 5, and then the new engine control section. When prompted for a command and crew ID, enter any single character for each.
+
+**Expected engine control output:**
+```
+--- Engine Control ---
+ENGINE_CTRL initial    : 0x00000000
+Set thruster 0         : 0x00000001  (|= 1u << 0)
+Set thruster 2         : 0x00000005  (|= 1u << 2)
+Set throttle = 7       : 0x00000075  (|= 7u << 4)
+Clear thruster 0       : 0x00000074  (&= ~(1u << 0))
+Toggle thruster 2 off  : 0x00000070  (^= 1u << 2)
+Toggle thruster 2 on   : 0x00000074  (^= 1u << 2)
+
+Throttle level read    : 7  ((ENGINE_CTRL >> 4) & 0x0F)
+
+ENGINE_STATUS          : 0x00000005
+Critical fault         : SET  (bit 2)
+Sensor fault           : SET  (bit 0)
+```
 
 ---
 
