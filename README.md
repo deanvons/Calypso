@@ -196,26 +196,70 @@ flowchart TD
 
 ## 🔍 What to notice in the code
 
-**[`main.c` — includes and type definitions](main.c)**
-[placeholder — completed after code is written]
+**[`main.c` — includes](main.c)**
+Four headers now, not three. `<stdbool.h>` is the only new addition — it defines `bool`, `true`, and `false`. None of the four standard headers pull in the others, so each must be listed explicitly.
 
 **[`main.c` — `typedef` and `enum` before `main`](main.c)**
-[placeholder — completed after code is written]
+Both live at file scope, above `main`. `typedef float sensor_float_t` is a single statement — it tells the compiler that `sensor_float_t` is an alias for `float`. The `enum MissionPhase` block lists all five states with inline comments showing their integer values. The enumerator names are visible to the whole translation unit from this point forward; the integers assigned to them are not special — they are ordinary `int` constants starting from 0.
 
-**[`main.c` — `float` and `double` sensor values](main.c)**
-[placeholder — completed after code is written]
+**[`main.c` — `velocity_kms` and `velocity_kms_precise`](main.c)**
+Two variables, same logical value, different types. `sensor_float_t velocity_kms = 32.7f` is a `float`; `double velocity_kms_precise = 32.714159265` is a `double`. The `f` suffix on `32.7f` matters: without it, `32.7` is a `double` literal assigned to a `float`, which the compiler narrows silently. The format specifiers make the precision difference visible in the output — `%8.2f` shows two decimal places and `%12.8f` shows eight. Both types use the same format verb `%f`; width and precision are formatting choices, not type-driven.
 
-**[`main.c` — escape sequences in `printf` strings](main.c)**
-[placeholder — completed after code is written]
+**[`main.c` — `shuttle_id` and escape sequences](main.c)**
+`char shuttle_id[8] = "CAL-007"` allocates exactly 8 bytes: 7 characters plus the null terminator `'\0'` the compiler appends automatically. The COMMS `printf` line uses three escape sequences in one string: `\t` produces a tab character, `\'` produces a literal single-quote, and `\\` produces a single backslash. Each escape sequence is two characters in the source but one byte in the compiled output. The `%s` specifier in `printf` reads bytes starting at `shuttle_id[0]` until it finds `'\0'`.
 
-**[`main.c` — `bool sensor_fault` and `enum MissionPhase`](main.c)**
-[placeholder — completed after code is written]
+**[`main.c` — `sensor_fault` and `current_phase`](main.c)**
+`bool sensor_fault = false` is `0` in memory. The ternary `sensor_fault ? "true" : "false"` selects a string literal at runtime — this is the idiomatic way to print a `bool` as text, since `%d` would print `0` or `1`. `enum MissionPhase current_phase = PREFLIGHT` is stored as the integer `0`. The cast `(int)current_phase` in `printf` makes the promotion explicit rather than relying on the implicit conversion — and the output shows both the name and the number side by side so you can see they refer to the same thing.
 
 ---
 
 ## ▶️ Running this branch
 
-[placeholder — completed after code is written]
+**Prerequisites:** GCC or Clang (C99+) and CMake 3.10+, or just GCC/Clang on its own.
+
+**With CMake (recommended):**
+```bash
+cmake -B build
+cmake --build build
+.\build\Debug\calypso.exe   # Windows (MSVC)
+.\build\calypso.exe         # Windows (MinGW)
+./build/calypso             # Linux / macOS
+```
+
+**Direct compilation (no CMake):**
+```bash
+gcc -std=c99 main.c -o calypso
+./calypso
+```
+
+The program prints the boot banner, triggers both range-check fault messages (the out-of-range ADC values are deliberate), then prints the full sensor status report — including the float velocity pair, distance in AU, shuttle ID with escape-sequence output, fault flag, and mission phase — before prompting for a command character and crew ID.
+
+**Expected output (sensor section):**
+```
+FAULT: fuel ADC reading (65540) exceeds uint16_t range [0, 65535]
+
+--- Sensor Status ---
+Fuel level           : 950 kg
+FAULT: temperature delta (-130) outside int8_t range [-128, 127]
+Engine temp delta    : -12 K
+Mission elapsed      : 10 s
+Total burn           : 10 s
+
+Distance to dest     : 384400 km
+
+Velocity (sensor)    :    32.70 km/s
+Velocity (precise)   :  32.71415926 km/s
+Distance             :   0.0027 AU
+
+Shuttle ID           : CAL-007
+COMMS:	'CAL-007' status nominal -- log: calypso\flight.log
+
+Sensor fault         : false
+
+Mission phase        : PREFLIGHT (0)
+
+Engine status reg    : 0x1F  (decimal: 31)
+```
 
 ---
 
