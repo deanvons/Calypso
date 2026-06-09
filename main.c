@@ -161,11 +161,11 @@ int main(void) {
            engine_status_reg, engine_status_reg);
 
     printf("Enter command: ");
-    char cmd;
+    char cmd = '\0';
     scanf(" %c", &cmd);
     printf("Command received: %c - standing by.\n\n", cmd);
 
-    char crew_id;
+    char crew_id = '\0';
     printf("Enter crew ID: ");
     scanf(" %c", &crew_id);
     printf("Crew ID confirmed: %c\n", crew_id);
