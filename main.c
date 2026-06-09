@@ -13,6 +13,39 @@ enum MissionPhase {
     DOCKED      /* 4 -- mission complete */
 };
 
+/*
+ * ENGINE_CTRL -- 32-bit engine control register simulation.
+ *   Bit 0  : Thruster 0 enable
+ *   Bit 1  : Thruster 1 enable
+ *   Bit 2  : Thruster 2 enable
+ *   Bit 3  : Thruster 3 enable
+ *   Bits 4-7 : Throttle level (0-15)
+ *   Bits 8-31: Reserved
+ *
+ * ENGINE_STATUS -- 32-bit engine status register simulation.
+ *   Bit 0  : Sensor fault
+ *   Bit 1  : Temperature warning
+ *   Bit 2  : Critical fault
+ *   Bits 3-31: Reserved
+ */
+uint32_t ENGINE_CTRL   = 0u;
+uint32_t ENGINE_STATUS = 0u;
+
+/* Thruster bit positions in ENGINE_CTRL */
+const uint8_t THRUSTER_0_BIT = 0;
+const uint8_t THRUSTER_1_BIT = 1;
+const uint8_t THRUSTER_2_BIT = 2;
+const uint8_t THRUSTER_3_BIT = 3;
+
+/* Throttle field in ENGINE_CTRL -- bits 4-7 */
+const uint8_t THROTTLE_SHIFT = 4;
+const uint8_t THROTTLE_MASK  = 0x0Fu; /* mask applied after right-shifting by THROTTLE_SHIFT */
+
+/* Fault bit positions in ENGINE_STATUS */
+const uint8_t SENSOR_FAULT_BIT   = 0;
+const uint8_t TEMP_WARNING_BIT   = 1;
+const uint8_t CRITICAL_FAULT_BIT = 2;
+
 int main(void) {
     printf("=========================================\n");
     printf("  CALYPSO FLIGHT COMPUTER\n");
@@ -270,6 +303,55 @@ int main(void) {
     printf("Sensor cycle = %u : %% 4 = %u  %s\n\n",
            sensor_cycle, sensor_cycle % 4,
            (sensor_cycle % 4 == 0) ? "[update due]" : "[skip]");
+
+    /* --- Engine control register operations ------------------------------ */
+
+    printf("--- Engine Control ---\n");
+    printf("ENGINE_CTRL initial    : 0x%08X\n", ENGINE_CTRL);
+
+    /* Set: OR with a single-bit mask.
+     * Bit N ORed with 1 becomes 1; every other bit is ORed with 0 and stays unchanged. */
+    ENGINE_CTRL |= (1u << THRUSTER_0_BIT);
+    printf("Set thruster 0         : 0x%08X  (|= 1u << %u)\n", ENGINE_CTRL, THRUSTER_0_BIT);
+
+    ENGINE_CTRL |= (1u << THRUSTER_2_BIT);
+    printf("Set thruster 2         : 0x%08X  (|= 1u << %u)\n", ENGINE_CTRL, THRUSTER_2_BIT);
+
+    /* NOTE: cast to uint32_t ensures the shift operates on the full register width */
+    ENGINE_CTRL |= ((uint32_t)7u << THROTTLE_SHIFT);
+    printf("Set throttle = 7       : 0x%08X  (|= 7u << %u)\n", ENGINE_CTRL, THROTTLE_SHIFT);
+
+    /* Clear: AND with the bitwise complement of the mask.
+     * ~(1u << N) has 0 only at bit N and 1 everywhere else.
+     * A bit ANDed with 0 becomes 0; ANDed with 1, it stays unchanged. */
+    ENGINE_CTRL &= ~(1u << THRUSTER_0_BIT);
+    printf("Clear thruster 0       : 0x%08X  (&= ~(1u << %u))\n", ENGINE_CTRL, THRUSTER_0_BIT);
+
+    /* Toggle: XOR with the mask. Bit N XORed with 1 flips; XORed with 0, unchanged. */
+    ENGINE_CTRL ^= (1u << THRUSTER_2_BIT);
+    printf("Toggle thruster 2 off  : 0x%08X  (^= 1u << %u)\n", ENGINE_CTRL, THRUSTER_2_BIT);
+
+    ENGINE_CTRL ^= (1u << THRUSTER_2_BIT);
+    printf("Toggle thruster 2 on   : 0x%08X  (^= 1u << %u)\n\n", ENGINE_CTRL, THRUSTER_2_BIT);
+
+    /* Extract throttle field: shift right to bring bits 4-7 to positions 0-3,
+     * then AND with THROTTLE_MASK (0x0F) to discard everything above bit 3. */
+    uint8_t throttle_level = (uint8_t)((ENGINE_CTRL >> THROTTLE_SHIFT) & THROTTLE_MASK);
+    printf("Throttle level read    : %u  ((ENGINE_CTRL >> %u) & 0x%02X)\n\n",
+           throttle_level, THROTTLE_SHIFT, THROTTLE_MASK);
+
+    /* Simulate fault conditions in ENGINE_STATUS */
+    ENGINE_STATUS |= (1u << SENSOR_FAULT_BIT);
+    ENGINE_STATUS |= (1u << CRITICAL_FAULT_BIT);
+    printf("ENGINE_STATUS          : 0x%08X\n", ENGINE_STATUS);
+
+    /* Test: AND isolates the target bit; the rest become 0. != 0 converts to bool. */
+    bool fault_critical = (ENGINE_STATUS & (1u << CRITICAL_FAULT_BIT)) != 0;
+    bool fault_sensor   = (ENGINE_STATUS & (1u << SENSOR_FAULT_BIT))   != 0;
+    printf("Critical fault         : %s  (bit %u)\n",
+           fault_critical ? "SET" : "clear", CRITICAL_FAULT_BIT);
+    printf("Sensor fault           : %s  (bit %u)\n\n",
+           fault_sensor   ? "SET" : "clear", SENSOR_FAULT_BIT);
 
     printf("Enter command: ");
     char cmd = '\0';
