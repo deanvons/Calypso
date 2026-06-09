@@ -196,7 +196,8 @@ int main(void) {
     /* Time to destination -- parentheses control evaluation order.
      * / and * share equal precedence and associate left-to-right, so without
      * parentheses distance / velocity * 3600 evaluates as
-     * (distance / velocity) * 3600 -- result in seconds, not hours.
+     * (distance / velocity) * 3600 -- roughly 42 million (seconds x 3600),
+     * not ~3 hours.
      * Parenthesising (velocity_kms * 3600.0f) forces the multiplication first,
      * producing the correct distance / speed-in-kph form. */
     sensor_float_t hours_to_dest = (sensor_float_t)distance_to_destination_km
