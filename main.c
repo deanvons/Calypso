@@ -215,6 +215,22 @@ int main(void) {
     printf("  fuel (%u kg) >= 50             : %s\n\n",
            fuel_level, (fuel_level >= 50) ? "true" : "false");
 
+    /* SOLUTION (Challenge 3): fuel_efficiency without and with explicit cast.
+     * distance_to_destination_km (uint32_t) / fuel_level (uint16_t) -- both
+     * integer types, so without a cast the division truncates toward zero.
+     * 384400 / 950 = 404 (integer), not 404.63 (float).
+     * The cast promotes the numerator to sensor_float_t before the division,
+     * making both operands float and preserving the fractional part. */
+    /* NOTE: integer division happens first; the outer cast converts the truncated result to float */
+    sensor_float_t fuel_efficiency_int = (sensor_float_t)(distance_to_destination_km / fuel_level);
+    printf("Fuel efficiency (int div) : %6.2f km/kg  (%" PRIu32 " / %u = %u -- truncated)\n",
+           fuel_efficiency_int,
+           distance_to_destination_km, fuel_level,
+           distance_to_destination_km / fuel_level);
+
+    sensor_float_t fuel_efficiency = (sensor_float_t)distance_to_destination_km / fuel_level;
+    printf("Fuel efficiency (cast)    : %6.2f km/kg  (float div)\n\n", fuel_efficiency);
+
     /* sizeof -- compile-time operator: no code runs at runtime.
      * Cast to unsigned so %u matches on both 32- and 64-bit size_t platforms;
      * the values are small enough that no truncation occurs. */
@@ -242,6 +258,8 @@ int main(void) {
     total_fuel_used += 15;          /* second burn period */
     printf("Total fuel used      : %" PRIu32 " kg  (accumulated with +=)\n\n", total_fuel_used);
 
+    /* SOLUTION (Challenge 5): sensor_cycle accumulated with += and tested with %.
+     * Initialise to 0, advance by 5, then by 3 -- check update-due on each step. */
     /* Modulo (%) -- sensor cycle counter: update due every 4 cycles */
     uint8_t sensor_cycle = 0;
     sensor_cycle += 5;
