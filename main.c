@@ -1,6 +1,17 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <stdbool.h> // NOTE: provides bool, true, false -- C99 and later
+
+typedef float sensor_float_t; /* alias for float used for all sensor readings */
+
+enum MissionPhase {
+    PREFLIGHT,  /* 0 -- pre-launch checks */
+    LAUNCH,     /* 1 -- engine ignition and ascent */
+    CRUISE,     /* 2 -- interplanetary transit */
+    APPROACH,   /* 3 -- deceleration toward destination */
+    DOCKED      /* 4 -- mission complete */
+};
 
 int main(void) {
     printf("=========================================\n");
@@ -88,6 +99,54 @@ int main(void) {
                distance_to_destination_km, UINT32_MAX / 2);
     }
     printf("Distance to dest     : %" PRIu32 " km\n\n", distance_to_destination_km);
+
+    /* --- Velocity sensor (float) --------------------------------------- */
+
+    /*
+     * sensor_float_t is typedef'd to float. velocity_kms and
+     * velocity_kms_precise hold the same logical value at different
+     * precision: float gives ~7 significant decimal digits, double ~15.
+     * The %8.2f specifier: field width 8, 2 decimal places, right-aligned.
+     * The %12.8f specifier: field width 12, 8 decimal places.
+     */
+    sensor_float_t velocity_kms         = 32.7f;
+    double         velocity_kms_precise = 32.714159265; /* double for reference precision */
+
+    printf("Velocity (sensor)    : %8.2f km/s\n",  velocity_kms);
+    printf("Velocity (precise)   : %12.8f km/s\n", velocity_kms_precise);
+
+    /* --- Distance sensor (float AU) ------------------------------------ */
+
+    sensor_float_t distance_au = 0.0027f; /* AU -- approx Earth-Moon distance */
+    printf("Distance             : %8.4f AU\n\n", distance_au);
+
+    /* --- Shuttle identification (char array) ---------------------------- */
+
+    /*
+     * "CAL-007" is 7 printable characters + null terminator '\0' = 8 bytes.
+     * The COMMS printf demonstrates three escape sequences:
+     *   \t  -- horizontal tab (aligns the log entry)
+     *   \'  -- single-quote character inside a string literal
+     *   \\  -- a literal backslash (one \ in source becomes two \\ to escape it)
+     */
+    char shuttle_id[8] = "CAL-007";
+    printf("Shuttle ID           : %s\n", shuttle_id);
+    printf("COMMS:\t\'%s\' status nominal -- log: calypso\\flight.log\n\n", shuttle_id);
+
+    /* --- Sensor fault flag (bool) --------------------------------------- */
+
+    bool sensor_fault = false;
+    printf("Sensor fault         : %s\n\n", sensor_fault ? "true" : "false");
+
+    /* --- Mission phase (enum) ------------------------------------------ */
+
+    /*
+     * PREFLIGHT is the integer 0. Printing (int)current_phase alongside the
+     * name makes the underlying representation visible -- the enum is stored
+     * as a plain int; the name exists only in the source.
+     */
+    enum MissionPhase current_phase = PREFLIGHT;
+    printf("Mission phase        : PREFLIGHT (%d)\n\n", (int)current_phase);
 
     /* --- Engine status register --------------------------------- */
 
