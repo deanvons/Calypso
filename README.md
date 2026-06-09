@@ -1,14 +1,14 @@
-# Phase README — Full Sensor Suite
+# Phase README — Navigation Calculations
 
-> **Phase 04 — Floating-Point, Characters, and Compound Types** | Calypso · Core C
+> **Phase 05 — Operators and Expressions** | Calypso · Core C
 
-Introducing `float`, `bool`, `enum`, and `typedef` — the types that make fractional sensor values, named mission states, and self-describing flags possible.
+Computing burn rate, time-to-destination, and approach safety — arithmetic, relational, and logical operators in C.
 
-The integer sensors are now correctly typed, but three new requirements have surfaced that integer types cannot satisfy. The velocity sensor reads 32.7 km/s: `uint16_t` can hold 32 or 33, but not the fractional part, and no combination of integer arithmetic recovers what was lost. The mission phase is an `int` counting from zero — a function that receives the value `4` has no way to know whether it is a mission phase, a sensor ID, a crew count, or a loop iteration. And the sensor fault flag is stored as a `1` or `0` `int` that carries no indication of what it represents or what values it can legally hold.
+Calypso can display every sensor reading on the boot report, but the flight computer cannot act on any of them yet. A fuel level and a burn rate are two numbers sitting next to each other — the computer cannot tell you how long the fuel will last unless it can subtract, divide, and compare. An approach velocity is just a `float` unless there is a check that compares it to a safe limit and evaluates `true` or `false`. This phase adds the inline navigation calculations that the boot sequence performs: burn rate from consumed fuel and elapsed time, hours remaining to destination, and a compound check that combines velocity and fuel margin into a single approach-safe verdict.
 
-This phase introduces the remaining basic types. `float` and `double` give Calypso fractional sensor values using the IEEE-754 representation — a compact encoding that covers an enormous range by trading precision for breadth. `enum MissionPhase` wraps the raw integer sequence in named constants, making `PREFLIGHT` self-describing where `0` was not. `bool` from `<stdbool.h>` gives fault flags a dedicated type whose legal values are exactly `true` and `false`. And `typedef` creates `sensor_float_t`, a named alias for `float` that makes the sensor domain visible in declarations without changing the underlying type. By the end of this phase, every value in the boot report has a type that matches what it represents.
+All three calculations are written directly in `main.c` rather than as separately defined blocks. That works at this scale, but by the end of the phase you can see the cost: the calculations are mixed in with the display code, and the threshold values are buried in the middle of a long expression. How to give a named scope to a reusable sequence of calculations is the question Phase 8 answers.
 
-> **A note on scope.** This phase introduces floating-point arithmetic and character data but does not cover the mathematical consequences of floating-point rounding in detail — that comes up naturally when you build navigation calculations in Phase 5. The `char shuttle_id[8]` array introduced here is the first array in the codebase; full array coverage — bounds checking, pointer decay, `sizeof` element count — is Phase 9.
+> **A note on scope.** This phase covers arithmetic, relational, logical, assignment, and special operators (`sizeof`, cast, `?:`). Bitwise operators (`&`, `|`, `^`, `~`, `<<`, `>>`) operate on binary patterns rather than values; their first genuine use case — controlling individual bits in the engine hardware register — arrives in Phase 6.
 
 ---
 
@@ -22,6 +22,7 @@ This phase introduces the remaining basic types. `float` and `double` give Calyp
 - [Learning goals](#-learning-goals)
 - [Key concepts](#-key-concepts)
 - [What to notice in the code](#-what-to-notice-in-the-code)
+- [What this phase revealed](#-what-this-phase-revealed)
 - [Running this branch](#-running-this-branch)
 - [Challenges for students](#-challenges-for-students)
 - [Thought pieces for the next branch](#-thought-pieces-for-the-next-branch)
@@ -36,8 +37,8 @@ This phase introduces the remaining basic types. `float` and `double` give Calyp
 | `phase-01_boot-and-io` | First program · `printf` / `scanf` · compilation model | Raw I/O |
 | `phase-02_debugging` | `printf` tracing · VS Code debugger · three C error categories | — |
 | `phase-03_integer-types` | `stdint.h` fixed-width types · `PRIu16` format specifiers · overflow guards | — |
-| `📌 phase-04_compound-types` | **`float` / `double` · `bool` · `enum MissionPhase` · `typedef sensor_float_t`** | — |
-| `phase-05_operators` | Arithmetic · relational · logical · `sizeof` · explicit casts | — |
+| `phase-04_compound-types` | `float` / `double` · `bool` · `enum MissionPhase` · `typedef sensor_float_t` | — |
+| `📌 phase-05_operators` | **Arithmetic · relational · logical · `sizeof` · explicit casts** | — |
 | `phase-06_bitwise` | Bitmasks · `ENGINE_CTRL` register · `1u << n` shift pattern | — |
 | `phase-07_control-flow` | `while(1)` command loop · `switch` on mission phase · `goto` emergency shutdown | — |
 | `phase-08_functions` | `sensors.c` / `engine.c` / `navigation.c` split · prototypes · pass-by-value | Modular |
@@ -65,106 +66,105 @@ git log --oneline          # find the SOLUTION commit hash
 git show <hash>            # inspect the solution in isolation
 ```
 
-### Challenge 1 — uint16_t underflow: what is the printed fuel level?
+### Challenge 1 — Does `float` store 32.7 exactly, and is `==` reliable?
 
-The maximum value of `uint16_t` is 65,535 (2¹⁶ − 1). If a sign error causes `consumed_kg` to hold the unwrapped value 70,000, the `(uint16_t)(70000)` cast wraps silently: 70,000 − 65,536 = 4,464. The subtraction `TANK_CAPACITY_KG − consumed_kg` then evaluates as `1000 − 4464` in unsigned 16-bit arithmetic. Since the mathematical result is negative, it wraps by adding 65,536 once: 1,000 − 4,464 + 65,536 = **62,072**. The assignment does not crash, does not clamp, and prints no warning — 62,072 appears as a plausible reading (the tank appears 62,072 kg full) while the tank is actually empty.
+`float` cannot store 32.7 exactly. The IEEE-754 mantissa has 23 bits of precision — roughly 7 significant decimal digits — and 32.7 in binary is a repeating fraction, so the stored value is the nearest representable number (approximately 32.70000076). Comparing two `float` values with `==` is unreliable for the same reason: two computations that ought to produce the same result may differ by one bit in the mantissa. The idiomatic test is `fabsf(a - b) < epsilon`, where `epsilon` is chosen to match the precision your use case requires.
 
-### Challenge 2 — `UINT16_MAX` vs `65535` when the type changes
+### Challenge 2 — `LAUNCH + 1`: does it equal `CRUISE`, and should you depend on that?
 
-With `UINT16_MAX`: the name makes the dependency explicit. If `fuel_level` changes from `uint16_t` to `uint32_t`, the name `UINT16_MAX` signals that the guard limit must also change to `UINT32_MAX` — you cannot miss it when reading the code. With `65535`: the code still compiles, and the guard still evaluates `raw_fuel_adc > 65535`. But that check is now wrong: a `uint32_t` destination can validly hold values up to 4,294,967,295. Every value in the range [65,536, UINT32_MAX] is a valid reading that fits without truncation, but the guard faults on all of them. The bug is silent — the program compiles, runs, and prints spurious fault messages for perfectly valid sensor readings.
+`LAUNCH + 1` evaluates to the integer `2`, which is the integer value assigned to `CRUISE` — so today it produces the right answer. But it is fragile. If a new state (`INSERTION`, say) is inserted between `LAUNCH` and `CRUISE` in the future, `LAUNCH + 1` now evaluates to `INSERTION` without any compiler warning; the name `CRUISE` still holds `3`, but the expression still returns `2`. Code that relies on enum arithmetic silently advances to the wrong state. Always use named constants in comparisons and assignments — `current_phase = CRUISE` — and never depend on the arithmetic between enum values.
 
-### Challenge 3 — Additive: distance sensor
+### Challenge 3 — Additive: `cabin_pressure_kpa` sensor
 
-Solved in the SOLUTION commit. See `main.c` — the `// SOLUTION (Challenge 3):` comment marks the `distance_to_destination_km` variable, its `PRIu32` format specifier, and the `UINT32_MAX / 2` range guard. With a value of 384,400 km the guard does not trigger — 384,400 is far below the ~2.1 billion threshold — but the guard pattern is present and correct.
+Solved in the SOLUTION commit. See `main.c` — the `// SOLUTION (Challenge 3):` comment marks the `cabin_pressure_kpa` variable, the `%10.3f` format specifier, the `< 80.0f || > 120.0f` range check, and the ternary `sensor_fault` print. At the initialised value of 101.325 kPa the guard does not trigger, so `sensor_fault` remains `false`.
 
-### Challenge 4 — Why hexadecimal for hardware registers
+### Challenge 4 — Why does `char shuttle_id[8]` need to be 8 elements wide?
 
-`0x1F` = 31 decimal = 0001 1111 binary. Each hex digit maps to exactly 4 bits: the high nibble `0x1` is `0001` and the low nibble `0xF` is `1111`. When individual bits control separate hardware functions — thruster pairs, fault flags, enable lines — you can read which bits are set at a glance from the hex. The decimal `31` gives no such information; to identify which bits are active you must decompose it by hand. As registers grow wider (a 32-bit `ENGINE_CTRL` with 8 thruster bits, a 4-bit throttle field, and several status bits), hex remains readable while decimal becomes opaque.
+The string `"CAL-007"` is 7 printable characters plus one null terminator (`'\0'`) — 8 bytes in total. The null terminator is how `printf`'s `%s` specifier knows where the string ends: it reads bytes until it encounters `'\0'`. If you declare `char shuttle_id[7]`, the compiler may silently omit the null terminator. When `printf` then reads past position 6, it continues into adjacent stack memory — a buffer overread with non-deterministic output that may print garbage, crash, or appear to work on one run and fail on the next.
 
-### Challenge 5 — Additive (stretch): `total_burn_s` two-step initialisation
+### Challenge 5 — Additive (stretch): element assignment vs array-name assignment
 
-Solved in the SOLUTION commit. See `main.c` — `total_burn_s` is declared on one line and initialised on the next, mirroring `mission_elapsed_s`. If you read `total_burn_s` before the initialisation line, C does not catch it — reading an uninitialised variable is undefined behaviour. The variable lives on the stack and holds whatever bytes were there from a previous function call. The compiler may warn with `-Wuninitialized`, but it is not required to, and the code compiles and runs either way. The output is non-deterministic: you may see zero, garbage, or the value from a previous call — none of it is guaranteed.
+Solved in the SOLUTION commit for the `shuttle_id[6] = '9'` change. An array name in C is a non-modifiable lvalue — it represents the fixed address of the first element, baked in at compile time. Writing `shuttle_id = "NEW-001"` asks the compiler to change what address `shuttle_id` refers to, which is not possible for arrays. An individual element like `shuttle_id[6]` is a modifiable lvalue — it refers to a specific byte in memory — so assignment to it works normally.
 
-### Thought piece 1 — What type does 32.7 km/s require?
+### Thought piece 1 — What operator categories does C provide?
 
-`uint16_t` cannot hold 32.7 — it can only represent whole numbers from 0 to 65,535, so any fractional part is lost permanently on assignment. The type needed is `float` or `double`. Both use the IEEE-754 encoding: a fixed-width binary field split into sign, exponent, and mantissa. This allows an enormous range — `float` covers roughly 1.2 × 10⁻³⁸ to 3.4 × 10³⁸ — but at a cost: the mantissa has a finite number of bits, so the stored value is the closest representable number to 32.7, not 32.7 exactly. `float` gives roughly 7 significant decimal digits; `double` gives roughly 15. For a velocity sensor on a spacecraft, a `float` error in the seventh decimal place is usually acceptable; for a guidance algorithm that compounds thousands of operations, `double` may be warranted.
+C operators fall into six main categories: arithmetic (`+`, `-`, `*`, `/`, `%`), relational (`<`, `<=`, `>`, `>=`, `==`, `!=`), logical (`&&`, `||`, `!`), bitwise (`&`, `|`, `^`, `~`, `<<`, `>>`), assignment (`=`, `+=`, `-=`, etc.), and special operators including `sizeof`, the cast operator, and the ternary `?:`. The categories matter because they operate on different representations: arithmetic and relational operate on values; bitwise operators operate on individual bits within the binary pattern (Phase 6); logical operators treat any non-zero value as true.
 
-### Thought piece 2 — Raw integer for mission phase: what is the risk?
+### Thought piece 2 — What is the result type of `fuel_consumed / burn_rate` when the types differ?
 
-If a function received the value `4`, it has no way to know it is a mission phase. `4` is a valid `int` — it could be a sensor ID, a crew count, an array index, or a phase number. A value of `7` (beyond `DOCKED`) would also be silently accepted. An `enum` gives the constants names — `PREFLIGHT`, `LAUNCH`, `CRUISE`, `APPROACH`, `DOCKED` — and makes intent visible in switch cases and function signatures. The underlying storage is still `int`; the enum adds documentation and compiler warnings in some tools, not hard type safety. Assigning `current_phase = 99` still compiles.
+When `uint16_t fuel_consumed` is divided by `sensor_float_t burn_rate` (`float`), C applies the usual arithmetic conversions: `uint16_t` is promoted to `float` first, then the division produces a `float` result. C does not warn about this — the promotion is implicit and silent. Values up to 65,535 fit exactly in a `float` (the 23-bit mantissa can represent all integers up to 2²⁴ = 16,777,216 without error), so the result is correct in this specific case. The risk appears with signed/unsigned integer mixing: a `uint32_t` combined with an `int32_t` in a comparison can produce counterintuitive results that compile without warning.
 
-### Thought piece 3 — Is there a dedicated bool type in C?
+### Thought piece 3 — `current_phase = LAUNCH + 1`: could you, and should you?
 
-Yes. C99 provides `bool` via `<stdbool.h>`, with `true` (1) and `false` (0) as the two defined values. Assigning any non-zero integer to a `bool` converts to `1`; zero converts to `0`. This replaces `int sensor_fault = 0` with `bool sensor_fault = false` — the type signals that only two states are intended, the values are self-describing, and code that reads `if (sensor_fault)` is unambiguous.
+See Challenge 2 above — the answer is the same. `LAUNCH + 1` evaluates to `2`, and assigning `2` to `current_phase` compiles because the compiler stores an `enum` variable as `int`. It produces the right answer today and the wrong answer silently if the sequence changes. Use `current_phase = CRUISE`.
 
 ---
 
 ## 💡 Why we made this decision
 
-### Floating-point for fractional sensor values
+### Operators as the language of computation
 
-An integer type can only represent whole numbers. `uint16_t velocity_kms = 32` loses the 0.7 permanently — no cast, shift, or arithmetic recovers a fractional part once truncated. `float` and `double` solve this using the IEEE-754 standard: a 32- or 64-bit field split into sign (1 bit), exponent (8 or 11 bits), and mantissa (23 or 52 bits). The exponent gives the type its range; the mantissa gives it precision.
+The boot report so far has been purely declarative: values are assigned to variables and then printed. The flight computer becomes useful when it can answer operational questions — how fast is fuel being consumed, how long until arrival, is the approach safe. These require arithmetic, comparison, and logical combination working together.
+
+C's operator set is divided into categories with distinct purposes:
 
 ```mermaid
-flowchart LR
-    A["uint16_t\n32 km/s\n(fractional part lost)"]
-    B["float (32-bit)\n≈ 32.70000076\n~7 sig. decimal digits"]
-    C["double (64-bit)\n≈ 32.70000000000000\n~15 sig. decimal digits"]
-    A -- "need fractions" --> B
-    B -- "need more precision" --> C
+flowchart TD
+    O["C operators — Phase 5 scope"]
+    O --> A["Arithmetic\n+ − * / %\nCompute values"]
+    O --> R["Relational\n< <= > >= == !=\nCompare values → 1 or 0"]
+    O --> L["Logical\n&& || !\nCombine conditions"]
+    O --> AS["Assignment\n= += −= *=\nStore or accumulate"]
+    O --> SP["Special\nsizeof · cast · ?:\nInspect types · coerce · select"]
 ```
 
-Neither `float` nor `double` stores 32.7 exactly — both store the closest representable value. The rule is: choose the precision that the use case actually requires. For a velocity sensor whose hardware has 4–5 digits of accuracy, `float` is sufficient and uses half the memory of `double`. For a guidance calculation that accumulates thousands of operations, `double`'s extra bits reduce error propagation. This phase uses `float` (via `sensor_float_t`) for all sensor readings and `double` for one precise reference value to make the distinction visible.
+Bitwise operators are deliberately absent here. They operate on binary patterns rather than on values, and no calculation in this phase requires them. Their first genuine requirement — enabling or disabling individual thruster bits in the engine control register — appears in Phase 6.
 
-### Named types for categorical and binary values
+### Integer vs float division: the most common silent error
 
-Three declarations in the existing codebase carry meaning that their types do not express.
+`10 / 3` in C evaluates to `3`, not `3.333...`. When both operands are integer types, `/` performs integer division — the fractional part is discarded without rounding or warning. This is the single most common source of silent wrong answers in C arithmetic because the result is a valid integer, not a crash or a NaN.
 
-**`enum MissionPhase`** — the mission phase `0` is indistinguishable from any other integer. Giving the constants names (`PREFLIGHT`, `LAUNCH`, `CRUISE`, `APPROACH`, `DOCKED`) makes them self-documenting in switch cases and comparisons. The compiler still stores `current_phase` as an `int` and will not stop an out-of-range assignment. The improvement is readability and code-search-ability, not runtime safety.
-
-**`bool sensor_fault`** — `int sensor_fault = 1` admits `2`, `−1`, or `1000` as equally valid states. `bool sensor_fault = true` declares intent: this value is a flag, not a number. Any non-zero value assigned to a `bool` converts to `1`; zero converts to `0`. The type matches what the variable actually represents.
-
-**`typedef float sensor_float_t`** — `typedef` creates an alias: `sensor_float_t` is `float` as far as the compiler is concerned. Every sensor reading declared `sensor_float_t` signals its domain in the declaration itself. If the underlying precision requirement ever changes from `float` to `double`, one line changes rather than every sensor declaration in the file.
+The fix is to ensure at least one operand is a float type before the division takes place. The explicit cast `(sensor_float_t)consumed_kg / mission_elapsed_s` promotes `consumed_kg` to `float` first; the compiler then promotes `mission_elapsed_s` to match, and the division is float division throughout. The cast goes on the numerator because that is the operand whose type would otherwise drive the operation to integer division — and naming the cast makes the intent visible to the next reader.
 
 ---
 
 ## ⏮️ What we built in the previous branch
 
-`phase-03_integer-types` redeclared all sensor variables using `<stdint.h>` fixed-width types: `uint16_t fuel_level`, `int8_t engine_temp_delta`, `uint32_t mission_elapsed_s`. Both Phase 2 bugs were fixed as part of the type correction — the off-by-one in the burn period and the sign error in the fuel calculation. Range-check guards using `UINT16_MAX` and `INT8_MIN` / `INT8_MAX` replaced magic number literals. Every `printf` format specifier was updated to the matching `<inttypes.h>` macro (`PRIu16`, `PRId8`, `PRIu32`). The engine status register was initialised with a hex literal (`0x1F`) and printed in both hex and decimal to demonstrate binary-to-hex correspondence.
+`phase-04_compound-types` extended the sensor suite with the types that integer types cannot represent. `sensor_float_t velocity_kms` and `sensor_float_t distance_au` hold fractional sensor values using the IEEE-754 `float` encoding; `double velocity_kms_precise` sits alongside for precision comparison. `enum MissionPhase` replaced the raw integer phase counter with five named constants (`PREFLIGHT` through `DOCKED`). `bool sensor_fault` from `<stdbool.h>` replaced a plain `int` flag. `typedef float sensor_float_t` created a domain-readable alias for `float`. The Challenge 3 SOLUTION added `cabin_pressure_kpa` with a float range check; the Challenge 5 SOLUTION demonstrated single-element array assignment with `shuttle_id[6] = '9'`.
 
 ---
 
 ## 🎯 What we're doing in this branch
 
-- Define `typedef float sensor_float_t` before `main` to alias `float` for all sensor readings
-- Define `enum MissionPhase { PREFLIGHT, LAUNCH, CRUISE, APPROACH, DOCKED }` before `main`
-- Add `sensor_float_t velocity_kms` and `sensor_float_t distance_au` to the sensor suite
-- Add `double velocity_kms_precise` alongside the float version to demonstrate precision difference
-- Format float output using width and precision specifiers (`%8.2f`, `%12.8f`, `%8.4f`)
-- Add `char shuttle_id[8]` initialised to `"CAL-007"` and print using escape sequences (`\t`, `\'`, `\\`)
-- Add `bool sensor_fault` from `<stdbool.h>` and print using the ternary conditional
-- Declare `enum MissionPhase current_phase` and print the phase name and its integer value
+- Add a `/* --- Navigation calculations --- */` section to `main.c` with three inline computation blocks
+- Compute `burn_rate_kgs` using `(sensor_float_t)consumed_kg / mission_elapsed_s` — explicit cast to force float division
+- Compute `hours_to_dest` using `distance_to_destination_km / (velocity_kms * 3600.0f)` — parentheses to control evaluation order
+- Compute `bool approach_safe` by combining a velocity threshold and a fuel margin check with `&&`
+- Print `sizeof(sensor_float_t)` and `sizeof(uint16_t)` to make the byte sizes of sensor types visible
+- Demonstrate prefix increment (`++sensor_index`) and postfix increment (`sensor_index++`) on a sensor index counter
+- Use compound assignment (`+=`) to accumulate a running fuel total across two simulated burn periods
+- Apply `%` (modulo) to derive a sensor cycle phase from a running counter
 
 ---
 
 ## 🧑🏻‍🏫 Learning goals
 
 ### Understand
-- **Explain** the IEEE-754 floating-point model — how sign, exponent, and mantissa encode a wide range of values and why precision is finite
-- **Explain** the trade-off between `float` and `double`: memory cost vs number of significant digits available
-- **Explain** how characters are encoded using ASCII — why `char` is a small integer type with a dual numeric/character nature
-- **Explain** how `enum` values are stored as integers and how named constants relate to their underlying numeric values
+- **Differentiate** between the five operator categories in scope for this phase — arithmetic, relational, logical, assignment, and special — and describe what each category operates on
+- **Explain** implicit type promotion: how C converts a `uint16_t` to `float` when it appears alongside a `float` operand, why the promotion is silent, and when it can produce a wrong result
 
 ### Apply
-- **Use** `float` and `double` for fractional sensor values and format them with width and precision specifiers
-- **Use** `typedef` to create a named alias (`sensor_float_t`) and use it in place of the underlying type
-- **Define** `enum MissionPhase` with five named states and use it to declare a mission phase variable
-- **Use** `bool` from `<stdbool.h>` to represent a sensor fault flag with `true` / `false`
-- **Use** character escape sequences (`\n`, `\t`, `\\`, `\'`) in formatted output strings
+- **Use** arithmetic operators (`+`, `-`, `*`, `/`, `%`) in the navigation calculations — including the explicit cast that forces float division when both sensor values are otherwise integer types
+- **Apply** relational operators (`<`, `<=`, `>`, `>=`) to check velocity and fuel thresholds in the approach safety condition
+- **Use** logical operators (`&&`, `||`, `!`) to combine two sensor conditions into a single `bool approach_safe` verdict
+- **Apply** compound assignment operators (`+=`) to accumulate a running fuel total
+- **Use** `sizeof` on `sensor_float_t` and `uint16_t` to inspect and print the byte sizes of Calypso's sensor types
+- **Apply** explicit type casting from `uint16_t` to `sensor_float_t` before a division to prevent integer truncation
+- **Apply** operator precedence rules — use parentheses in `hours_to_dest` to make evaluation order explicit and verifiable
 
 ### Analyze
-- **Examine** the difference between `float velocity_kms` and `double velocity_kms_precise` in the code — what does the extra precision cost, and when does it matter?
-- **Compare** `enum MissionPhase current_phase` with the previous `int phase` — what is the difference in type safety, and what can still go wrong?
+- **Examine** the burn rate calculation with and without the explicit cast — what integer result does truncation produce, and why does it look plausible rather than obviously wrong?
+- **Compare** prefix (`++sensor_index`) and postfix (`sensor_index++`) increment in a context where the value is used in the same expression — what is the difference in the observed output?
 
 ---
 
@@ -172,123 +172,65 @@ Three declarations in the existing codebase carry meaning that their types do no
 
 | Concept | Plain English |
 |---|---|
-| **`float`** | A 32-bit IEEE-754 floating-point type. Covers a wide range but stores only about 7 significant decimal digits. The standard type for sensor readings where hardware precision is the limiting factor. |
-| **`double`** | A 64-bit IEEE-754 floating-point type. Covers the same range as `float` with roughly 15 significant decimal digits. Used when a calculation needs to accumulate many operations without losing precision. |
-| **IEEE-754** | The international standard that defines how floating-point numbers are stored in binary: 1 sign bit, exponent bits for range, mantissa bits for precision. Neither `float` nor `double` can represent every real number — each stores the closest representable value. |
-| **`char`** | A type that holds a single character — stored as a small integer (typically 8 bits) using the ASCII encoding. `'A'` is stored as 65; `'0'` is stored as 48. A `char` variable can be used either as a character or as an integer. |
-| **Escape sequence** | A two-character literal starting with `\` that represents a single control character: `\n` (newline), `\t` (tab), `\\` (backslash), `\'` (single quote), `\"` (double quote). Escape sequences appear inside string or character literals. |
-| **`enum`** | A named list of integer constants. `enum MissionPhase { PREFLIGHT, LAUNCH, CRUISE, APPROACH, DOCKED }` assigns integer values starting from 0. The names appear in the source; the integers are an implementation detail. Does not add runtime range safety. |
-| **`bool`** | A type from `<stdbool.h>` (C99) with exactly two values: `true` (1) and `false` (0). Any non-zero integer assigned to a `bool` converts to `1`. Signals binary intent; does not prevent misuse. |
-| **`typedef`** | Creates an alias for an existing type. `typedef float sensor_float_t` makes `sensor_float_t` a synonym for `float`. The compiler sees `float`; the reader sees the domain. Useful for making a single-line change if the underlying type needs to change. |
-
-```mermaid
-flowchart TD
-    A["C basic types (Phase 3–4)"]
-    A --> B["Integer types\nint8_t · uint16_t · uint32_t\nbool · char · enum"]
-    A --> C["Floating-point types\nfloat · double"]
-    B --> D["Fixed-width\n(stdint.h)"]
-    B --> E["Named constants\n(enum)"]
-    B --> F["Flag type\n(bool)"]
-    C --> G["typedef alias\nsensor_float_t = float"]
-```
+| **Arithmetic operators** | `+`, `-`, `*`, `/`, `%` — perform calculations on numeric values. `/` between two integer operands truncates toward zero; `/` with at least one `float` operand produces a `float` result. |
+| **Integer division** | When both operands of `/` are integer types, C discards the fractional part without rounding and without warning. `7 / 2` is `3`, not `3.5`. |
+| **Relational operators** | `<`, `<=`, `>`, `>=`, `==`, `!=` — compare two values and produce `1` (true) or `0` (false) as a plain `int`. The result is typically used directly in a condition. |
+| **Logical operators** | `&&` (AND), `\|\|` (OR), `!` (NOT) — combine or invert conditions. `&&` is false if either operand is zero; `\|\|` is true if either is non-zero. Both short-circuit: if the left operand determines the result, the right operand is not evaluated. |
+| **Short-circuit evaluation** | With `a && b`, if `a` is false, `b` is never evaluated. With `a \|\| b`, if `a` is true, `b` is never evaluated. This is guaranteed by the C standard, not just an optimisation. |
+| **Implicit type promotion** | When operands of different types appear in an expression, C converts the smaller or narrower type to match the larger one before the operation. A `uint16_t` combined with a `sensor_float_t` becomes `sensor_float_t`. The original variable is unchanged. |
+| **Explicit cast** | `(sensor_float_t)consumed_kg` converts the value to `float` before the division. It makes the promotion visible in the source and ensures the compiler does not perform integer division when both operands would otherwise be integers. |
+| **`sizeof`** | A compile-time operator that returns the byte size of a type or variable as a `size_t`. `sizeof(sensor_float_t)` is `4`; `sizeof(uint16_t)` is `2`. It is evaluated entirely by the compiler — no code runs at runtime. |
+| **Compound assignment** | `+=`, `-=`, `*=`, `/=` are shorthand for read-modify-write: `total += reading` means `total = total + reading`. The left operand is evaluated once, not twice. |
+| **Operator precedence** | The rules that determine which sub-expressions are evaluated first when parentheses are absent. `*` and `/` bind more tightly than `+` and `-`. Parentheses override precedence and make intent explicit. |
 
 ---
 
 ## 🔍 What to notice in the code
 
-**[`main.c` — includes](main.c)**
-Four headers now, not three. `<stdbool.h>` is the only new addition — it defines `bool`, `true`, and `false`. None of the four standard headers pull in the others, so each must be listed explicitly.
+_Completed after code is written._
 
-**[`main.c` — `typedef` and `enum` before `main`](main.c)**
-Both live at file scope, above `main`. `typedef float sensor_float_t` is a single statement — it tells the compiler that `sensor_float_t` is an alias for `float`. The `enum MissionPhase` block lists all five states with inline comments showing their integer values. The enumerator names are visible to the whole translation unit from this point forward; the integers assigned to them are not special — they are ordinary `int` constants starting from 0.
+---
 
-**[`main.c` — `velocity_kms` and `velocity_kms_precise`](main.c)**
-Two variables, same logical value, different types. `sensor_float_t velocity_kms = 32.7f` is a `float`; `double velocity_kms_precise = 32.714159265` is a `double`. The `f` suffix on `32.7f` matters: without it, `32.7` is a `double` literal assigned to a `float`, which the compiler narrows silently. The format specifiers make the precision difference visible in the output — `%8.2f` shows two decimal places and `%12.8f` shows eight. Both types use the same format verb `%f`; width and precision are formatting choices, not type-driven.
+## 🔗 What this phase revealed
 
-**[`main.c` — `shuttle_id` and escape sequences](main.c)**
-`char shuttle_id[8] = "CAL-007"` allocates exactly 8 bytes: 7 characters plus the null terminator `'\0'` the compiler appends automatically. The COMMS `printf` line uses three escape sequences in one string: `\t` produces a tab character, `\'` produces a literal single-quote, and `\\` produces a single backslash. Each escape sequence is two characters in the source but one byte in the compiled output. The `%s` specifier in `printf` reads bytes starting at `shuttle_id[0]` until it finds `'\0'`.
+By the end of this phase, the navigation section of `main.c` is a flat sequence of variable declarations, arithmetic expressions, and `printf` calls. Each block has a clear intent — computing burn rate, computing time to destination, checking approach safety — but that intent is visible only through comments, not through the structure of the code itself. The threshold values (`2.0f`, `50`) and the intermediate results (`hours_to_dest`, `approach_safe`) are all visible to the entire `main` scope, even though nothing outside the navigation block uses them.
 
-**[`main.c` — `sensor_fault` and `current_phase`](main.c)**
-`bool sensor_fault = false` is `0` in memory. The ternary `sensor_fault ? "true" : "false"` selects a string literal at runtime — this is the idiomatic way to print a `bool` as text, since `%d` would print `0` or `1`. `enum MissionPhase current_phase = PREFLIGHT` is stored as the integer `0`. The cast `(int)current_phase` in `printf` makes the promotion explicit rather than relying on the implicit conversion — and the output shows both the name and the number side by side so you can see they refer to the same thing.
+> **LEARNING MOMENT:** A sequence of calculations that takes defined inputs and produces a named result has a natural structure — it is logically self-contained. The mechanism C provides for packaging that structure, giving it a name, its own scope, and a defined output, is introduced in Phase 8. The friction you feel reading this phase's code — "I can see what this block does, but the language does not name it" — is exactly what that phase is designed to resolve.
 
 ---
 
 ## ▶️ Running this branch
 
-**Prerequisites:** GCC or Clang (C99+) and CMake 3.10+, or just GCC/Clang on its own.
-
-**With CMake (recommended):**
-```bash
-cmake -B build
-cmake --build build
-.\build\Debug\calypso.exe   # Windows (MSVC)
-.\build\calypso.exe         # Windows (MinGW)
-./build/calypso             # Linux / macOS
-```
-
-**Direct compilation (no CMake):**
-```bash
-gcc -std=c99 main.c -o calypso
-./calypso
-```
-
-The program prints the boot banner, triggers both range-check fault messages (the out-of-range ADC values are deliberate), then prints the full sensor status report — including the float velocity pair, distance in AU, shuttle ID with escape-sequence output, fault flag, and mission phase — before prompting for a command character and crew ID.
-
-**Expected output (sensor section):**
-```
-FAULT: fuel ADC reading (65540) exceeds uint16_t range [0, 65535]
-
---- Sensor Status ---
-Fuel level           : 950 kg
-FAULT: temperature delta (-130) outside int8_t range [-128, 127]
-Engine temp delta    : -12 K
-Mission elapsed      : 10 s
-Total burn           : 10 s
-
-Distance to dest     : 384400 km
-
-Velocity (sensor)    :    32.70 km/s
-Velocity (precise)   :  32.71415926 km/s
-Distance             :   0.0027 AU
-
-Shuttle ID           : CAL-007
-COMMS:	'CAL-007' status nominal -- log: calypso\flight.log
-
-Sensor fault         : false
-
-Mission phase        : PREFLIGHT (0)
-
-Engine status reg    : 0x1F  (decimal: 31)
-```
+_Completed after code is written._
 
 ---
 
 ## ✏️ Challenges for students
 
 **Challenge 1 — Analytical**
-The code prints `velocity_kms` as `32.70 km/s`. Does `float` store exactly 32.7? Explain what the IEEE-754 mantissa field trades off to achieve its range, and what that trade-off produces for the stored value. What would happen if you compared two float sensor readings with `==` — is that a reliable test for equality?
+The `hours_to_dest` calculation is written as `distance_to_destination_km / (velocity_kms * 3600.0f)`. Why does the parenthesisation matter here? Write out what the expression `distance_to_destination_km / velocity_kms * 3600.0f` would evaluate to without the parentheses, using the actual values from the code. Is it the same result? What operator precedence rule explains the difference?
 
 **Challenge 2 — Analytical**
-`enum MissionPhase` assigns `PREFLIGHT = 0`, `LAUNCH = 1`, ..., `DOCKED = 4` — the underlying storage is `int`. What does the expression `LAUNCH + 1` evaluate to? Does it equal `CRUISE`? Should you write code that depends on that arithmetic? What specifically breaks if a new phase (say, `INSERTION`) is inserted between `LAUNCH` and `CRUISE` in the future?
+The approach safety check uses `&&` to combine a velocity condition and a fuel condition. What does short-circuit evaluation guarantee about the right operand when the left operand is false? Write a hypothetical two-part condition where short-circuit behaviour prevents a divide-by-zero — and explain why that guarantee matters for the correctness of compound conditions in C.
 
 **Challenge 3 — Additive**
-Add a `sensor_float_t` variable `cabin_pressure_kpa` initialised to `101.325`. Print it with a format specifier showing exactly 3 decimal places, right-aligned in a field at least 10 characters wide. Add a range check: if the value drops below `80.0f` or rises above `120.0f`, set `sensor_fault = true` and print a fault message that includes the actual value and both bounds. Print `sensor_fault` after the check using the ternary conditional already used for the existing fault flag.
+Add a `fuel_efficiency` variable of type `sensor_float_t` that divides `distance_to_destination_km` by `fuel_level` to produce km per kg of fuel. First compute the division without any cast and print the result. Then add an explicit cast on the numerator and print again. Add a comment explaining what changed and why the first version produces the value it does.
 
 **Challenge 4 — Analytical**
-`char shuttle_id[8]` is initialised with `"CAL-007"`. C stores the 7 characters plus a null terminator `'\0'` — 8 bytes in total. Why does the array need to be 8 elements wide rather than 7? If you declared `char shuttle_id[7]` instead and initialised it the same way, what would the compiler do — and what silent problem would that introduce at runtime?
+`sizeof(sensor_float_t)` returns `4` and `sizeof(double)` returns `8`. In Phase 4 you saw that `float` gives roughly 7 significant decimal digits and `double` gives roughly 15. What is the relationship between byte size and available precision? Does doubling the bytes double the significant digits — and if not, why not?
 
 **Challenge 5 — Additive (stretch)**
-After the `shuttle_id` initialisation, try writing `shuttle_id = "NEW-001"`. Does it compile? Now change the last character by direct index assignment — write `shuttle_id[6] = '9'` to change `'7'` to `'9'`. Print the modified ID with `%s`. Explain: why can a single element be assigned while the array name itself cannot?
+Add a `sensor_cycle` variable of type `uint8_t` initialised to `0`. Use `+=` to advance it by `5`. Then compute `sensor_cycle % 4` and store the result in a `uint8_t`. Print whether the result is zero using the ternary conditional — zero means the sensor is due for an update, non-zero means it is not. Now advance `sensor_cycle` by another `3` using `+=` and repeat the check. What values do you get, and do they match your expectation?
 
 ---
 
 ## 💭 Thought pieces for the next branch
 
-1. Calypso can read and display sensor data but the flight computer cannot act on it yet. To compute fuel burn rate you need subtraction; to check whether approach velocity is within safe limits you need comparison. What categories of operator does C provide for working with values, and what are they called?
-2. If `fuel_consumed` is `uint16_t` and `burn_rate` is `sensor_float_t` (`float`), what is the result type of `fuel_consumed / burn_rate`? Does C tell you at compile time? Could it silently produce a wrong answer?
-3. The `MissionPhase` enum stores integer values under the hood. Could you write `current_phase = LAUNCH + 1` to advance to `CRUISE`? Should you? What breaks if a new phase is inserted into the sequence?
+1. The engine has eight thruster pairs, each controlled by a dedicated bit in a single 32-bit hardware register. Addition and subtraction cannot change one bit without affecting all the others. What operator can set exactly one bit without touching the rest?
+2. Bits 4–7 of the engine register represent a 4-bit throttle level (values 0–15). How do you extract just those four bits — producing a result in the range 0–15 — without disturbing bits 0–3 or bits 8–31?
+3. The logical AND operator `&&` in the approach safety check produces `1` or `0`. C also has a `&` operator. What does `&` do that `&&` does not, and why would applying `&` to the same sensor values produce a different result?
 
 ---
 
-*Previous branch: [`phase-03_integer-types`]*
-*Next branch: [`phase-05_operators`]*
+*Previous branch: [`phase-04_compound-types`]*
+*Next branch: [`phase-06_bitwise`]*
