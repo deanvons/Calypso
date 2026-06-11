@@ -82,7 +82,7 @@ The relationship is logarithmic, not linear. `float` is 32 bits total: 1 sign + 
 
 ### Challenge 5 — Additive (stretch): `sensor_cycle` with `%`
 
-Solved by the navigation section already in the phase code. See the `// SOLUTION (Challenge 5):` comment in `main.c` at the `sensor_cycle` block. `sensor_cycle` is initialised to 0, advanced by 5 (`% 4 = 1` → skip), then advanced by 3 to 8 (`% 4 = 0` → update due). The ternary `(sensor_cycle % 4 == 0) ? "[update due]" : "[skip]"` produces the status string directly without an `if` statement.
+Solved in the SOLUTION commit. `sensor_cycle` was removed during branch housekeeping — it served the lesson but was not load-bearing for the phase-06 goals — so use `git show <hash>` to inspect the implementation in isolation. `sensor_cycle` is initialised to 0, advanced by 5 (`% 4 = 1` → skip), then advanced by 3 to 8 (`% 4 = 0` → update due). The ternary `(sensor_cycle % 4 == 0) ? "[update due]" : "[skip]"` produces the status string directly without an `if` statement.
 
 ### Thought piece 1 — What operator can set exactly one bit?
 
