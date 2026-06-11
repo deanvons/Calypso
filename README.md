@@ -186,7 +186,23 @@ stateDiagram-v2
 
 ## 🔍 What to notice in the code
 
-*Placeholder — completed after code is written.*
+**[`main.c:353`](main.c#L353) — `while(1)` command loop**
+The loop has no exit condition in its header — exit is entirely via `break` (line 376, quit command) or `goto` (lines 384 and 481, fault paths). This is the embedded-systems structure: the loop body is the program, and every exit path is named explicitly at the point where the decision is made.
+
+**[`main.c:365–372`](main.c#L365) — `do-while` input validator**
+The body reads a character and checks it before the condition is tested. This guarantees `cmd` is always set by a real read — no sentinel value or pre-assignment needed before the loop. Challenge 2 asks you to rewrite this as a plain `while` and identify what extra code is required.
+
+**[`main.c:355–360`](main.c#L355) and [`main.c:427–435`](main.c#L427) — ternary chains**
+Both phase-name ternary chains produce a string value without an `if` block. The pattern `(condition) ? "value" : (next condition) ? ...` chains as many cases as needed; the final `: "UNKNOWN"` is the catch-all arm. Ternary is the right tool when every branch produces a value and none has side effects.
+
+**[`main.c:397–421`](main.c#L397) — `switch` with intentional fallthrough**
+`case LAUNCH` prints the launch-specific line, then falls through into `case CRUISE` — there is no `break` between them. The `/* FALLTHROUGH */` comment documents the intent so a future reader (and `-Wimplicit-fallthrough`) can distinguish this from a forgotten `break`. When `current_phase == LAUNCH`, both the LAUNCH printf and the "Active burn" printf execute; when `current_phase == CRUISE`, only "Active burn" executes. Phase advancement happens after the switch (lines 425–436), not inside it, keeping the fallthrough body free of state mutations.
+
+**[`main.c:458–471`](main.c#L458) — `for` loop with `continue`**
+`continue` at line 461 skips the classification and printing for a faulted sensor. In a `for` loop, `continue` jumps to the increment expression (`i++`) before re-testing the condition — Challenge 4 asks what it jumps to in a `while` loop instead.
+
+**[`main.c:380–385`](main.c#L380) and [`main.c:481–488`](main.c#L481) — `goto emergency_shutdown`**
+Two paths use `goto`: the `'e'` command (explicit request) and the end-of-cycle fault check (implicit trigger). Both jump to the same `emergency_shutdown:` label at line 488, which clears `ENGINE_CTRL` to zero and exits. The `'q'` → `break` path does not hit the label — it falls through to the normal-shutdown `printf` and `return 0` instead, giving two distinct exit sequences from one function.
 
 ---
 
@@ -200,7 +216,52 @@ By the end of this phase, `main.c` handles the boot sequence, sensor reads, navi
 
 ## ▶️ Running this branch
 
-*Placeholder — completed after code is written.*
+**Prerequisites:** GCC or Clang (C99+) and CMake 3.10+, or just GCC/Clang on its own.
+
+**With CMake (recommended):**
+```bash
+cmake -B build
+cmake --build build
+.\build\Debug\calypso.exe   # Windows (MSVC)
+.\build\calypso.exe         # Windows (MinGW)
+./build/calypso             # Linux / macOS
+```
+
+**Direct compilation (no CMake):**
+```bash
+gcc -std=c99 main.c -o calypso
+./calypso
+```
+
+The program prints the boot banner, the full sensor suite, the navigation calculations, and the engine control section from previous phases, then enters the command loop. Commands:
+
+| Command | Action |
+|---|---|
+| `n` | Advance the mission phase (`PREFLIGHT → LAUNCH → CRUISE → APPROACH → DOCKED`) |
+| `s` | Run the periodic sensor scan (three sensors, one faulted — watch `continue` skip it) |
+| `e` | Trigger the emergency shutdown via `goto` |
+| `q` | Normal quit via `break` |
+
+Any unrecognised character re-prompts (the `do-while` validator).
+
+**Expected output excerpt — LAUNCH → CRUISE phase advance (showing intentional fallthrough):**
+```
+[LAUNCH] Command (n/s/e/q): n
+  Launch: ignition sequence active
+  Active burn: throttle=10 | fuel=950 kg | STATUS=0x00000000
+  >> Phase advanced to CRUISE
+```
+
+**Expected output — emergency shutdown:**
+```
+[LAUNCH] Command (n/s/e/q): e
+EMERGENCY COMMAND RECEIVED -- initiating shutdown
+
+--- EMERGENCY SHUTDOWN ---
+ENGINE_CTRL cleared    : 0x00000000
+ENGINE_STATUS          : 0x00000005
+Calypso offline.
+```
 
 ---
 
