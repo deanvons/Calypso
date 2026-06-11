@@ -305,6 +305,39 @@ int main(void) {
     printf("Sensor fault           : %s  (bit %u)\n\n",
            fault_sensor   ? "SET" : "clear", SENSOR_FAULT_BIT);
 
+    /* SOLUTION (Challenge 3): enable thruster 1, change throttle to 10, confirm readback */
+    ENGINE_CTRL |= ((uint32_t)1u << THRUSTER_1_BIT);
+    printf("Set thruster 1         : 0x%08" PRIX32 "  (|= 1u << %u)\n", ENGINE_CTRL, THRUSTER_1_BIT);
+
+    /* Clear the existing throttle field, then write 10 into bits 4-7.
+     * THROTTLE_MASK (0x0Fu) is the post-shift mask; shifting it back by
+     * THROTTLE_SHIFT gives the in-place mask 0xF0u that covers bits 4-7. */
+    ENGINE_CTRL &= ~((uint32_t)THROTTLE_MASK << THROTTLE_SHIFT);
+    ENGINE_CTRL |=  ((uint32_t)10u            << THROTTLE_SHIFT);
+    printf("Set throttle = 10      : 0x%08" PRIX32 "  (cleared field, then |= 10u << %u)\n",
+           ENGINE_CTRL, THROTTLE_SHIFT);
+
+    uint8_t throttle_readback = (uint8_t)((ENGINE_CTRL >> THROTTLE_SHIFT) & THROTTLE_MASK);
+    bool    thruster1_set     = (ENGINE_CTRL & ((uint32_t)1u << THRUSTER_1_BIT)) != 0;
+    printf("Throttle readback      : %u  (expected 10)\n", throttle_readback);
+    printf("Thruster 1 still set   : %s\n\n", thruster1_set ? "YES" : "NO");
+
+    /*
+     * SOLUTION (Challenge 5): BATTERY_LEVEL field in ENGINE_STATUS bits 4-7.
+     * Bits 0-2 hold the fault flags -- the write must not disturb them.
+     * The in-place mask for bits 4-7 is (BATTERY_LEVEL_MASK << BATTERY_LEVEL_SHIFT).
+     */
+    const uint8_t BATTERY_LEVEL_SHIFT = 4;
+    const uint8_t BATTERY_LEVEL_MASK  = 0x0Fu;
+
+    printf("ENGINE_STATUS (before) : 0x%08" PRIX32 "\n", ENGINE_STATUS);
+    ENGINE_STATUS &= ~((uint32_t)BATTERY_LEVEL_MASK << BATTERY_LEVEL_SHIFT);
+    ENGINE_STATUS |=  ((uint32_t)12u                << BATTERY_LEVEL_SHIFT);
+    printf("ENGINE_STATUS (after)  : 0x%08" PRIX32 "  (battery = 12 in bits 4-7)\n", ENGINE_STATUS);
+
+    uint8_t battery_level = (uint8_t)((ENGINE_STATUS >> BATTERY_LEVEL_SHIFT) & BATTERY_LEVEL_MASK);
+    printf("Battery level readback : %u  (expected 12)\n\n", battery_level);
+
     printf("Enter command: ");
     char cmd = '\0';
     scanf(" %c", &cmd);
