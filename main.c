@@ -72,10 +72,6 @@ int main(void) {
     uint32_t mission_elapsed_s;
     mission_elapsed_s = 10; /* seconds of engine burn */
 
-    // SOLUTION (Challenge 5): second uint32_t sensor using the same two-step pattern
-    uint32_t total_burn_s;
-    total_burn_s = mission_elapsed_s; /* accumulated engine burn over the mission so far */
-
     uint16_t consumed_kg = (uint16_t)(BURN_RATE_KGS * mission_elapsed_s);
     uint16_t fuel_level  = TANK_CAPACITY_KG - consumed_kg; /* fixed: Phase 2 had + instead of - */
 
@@ -115,8 +111,7 @@ int main(void) {
     }
 
     printf("Engine temp delta    : %" PRId8 " K\n", engine_temp_delta);
-    printf("Mission elapsed      : %" PRIu32 " s\n", mission_elapsed_s);
-    printf("Total burn           : %" PRIu32 " s\n\n", total_burn_s);
+    printf("Mission elapsed      : %" PRIu32 " s\n\n", mission_elapsed_s);
 
     /* --- Distance sensor ---------------------------------------- */
 
@@ -196,18 +191,6 @@ int main(void) {
     enum MissionPhase current_phase = PREFLIGHT;
     printf("Mission phase        : PREFLIGHT (%d)\n\n", (int)current_phase);
 
-    /* --- Engine status register --------------------------------- */
-
-    /*
-     * Hardware register values are most readable in hexadecimal -- each hex
-     * digit corresponds to exactly 4 bits. 0x1F = 0001 1111 in binary = 31
-     * decimal. Binary literals (0b00011111) are supported by GCC and Clang
-     * as an extension but are not standard C until C23.
-     */
-    uint8_t engine_status_reg = 0x1F;
-    printf("Engine status reg    : 0x%02X  (decimal: %u)\n\n",
-           engine_status_reg, engine_status_reg);
-
     /* --- Navigation calculations --------------------------------------- */
 
     printf("--- Navigation ---\n");
@@ -218,13 +201,6 @@ int main(void) {
      * sensor_float_t before the division, making both operands float. */
     sensor_float_t burn_rate_kgs = (sensor_float_t)consumed_kg / mission_elapsed_s;
     printf("Burn rate            : %6.2f kg/s\n", burn_rate_kgs);
-
-    // NOTE: values 7 and 2 are chosen so truncation is visible; 50 / 10 divides evenly
-    uint32_t demo_a = 7, demo_b = 2;
-    printf("  int div  7 / 2     : %" PRIu32 "    (truncated -- remainder discarded)\n",
-           demo_a / demo_b);
-    printf("  float div 7 / 2    : %.1f  (explicit cast preserves remainder)\n\n",
-           (sensor_float_t)demo_a / demo_b);
 
     /* Time to destination -- parentheses control evaluation order.
      * / and * share equal precedence and associate left-to-right, so without
@@ -271,38 +247,6 @@ int main(void) {
     printf("  sizeof(sensor_float_t) = %u bytes\n", (unsigned)sizeof(sensor_float_t));
     printf("  sizeof(uint16_t)       = %u bytes\n", (unsigned)sizeof(uint16_t));
     printf("  sizeof(double)         = %u bytes\n\n", (unsigned)sizeof(double));
-
-    /* Prefix vs postfix increment.
-     * Prefix (++i): increments first, then provides the new value.
-     * Postfix (i++): provides the current value first, then increments.
-     * Assigning each result to a separate variable avoids UB from reading
-     * and modifying the same variable within one expression. */
-    uint8_t sensor_index = 0;
-    uint8_t pre_val = ++sensor_index; /* sensor_index becomes 1; pre_val = 1  */
-    printf("Prefix  ++sensor_index : result = %u, sensor_index = %u\n", pre_val, sensor_index);
-
-    sensor_index = 0;
-    uint8_t post_val = sensor_index++; /* post_val = 0; sensor_index becomes 1 */
-    printf("Postfix sensor_index++ : result = %u, sensor_index = %u\n\n", post_val, sensor_index);
-
-    /* Compound assignment (+=) -- accumulate total fuel used */
-    uint32_t total_fuel_used = 0;
-    total_fuel_used += consumed_kg; /* first burn period  */
-    total_fuel_used += 15;          /* second burn period */
-    printf("Total fuel used      : %" PRIu32 " kg  (accumulated with +=)\n\n", total_fuel_used);
-
-    /* SOLUTION (Challenge 5): sensor_cycle accumulated with += and tested with %.
-     * Initialise to 0, advance by 5, then by 3 -- check update-due on each step. */
-    /* Modulo (%) -- sensor cycle counter: update due every 4 cycles */
-    uint8_t sensor_cycle = 0;
-    sensor_cycle += 5;
-    printf("Sensor cycle = %u : %% 4 = %u  %s\n",
-           sensor_cycle, sensor_cycle % 4,
-           (sensor_cycle % 4 == 0) ? "[update due]" : "[skip]");
-    sensor_cycle += 3;
-    printf("Sensor cycle = %u : %% 4 = %u  %s\n\n",
-           sensor_cycle, sensor_cycle % 4,
-           (sensor_cycle % 4 == 0) ? "[update due]" : "[skip]");
 
     /* --- Engine control register operations ------------------------------ */
 

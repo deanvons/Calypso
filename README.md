@@ -142,7 +142,7 @@ flowchart LR
 
 ## ⏮️ What we built in the previous branch
 
-`phase-05_operators` added the navigation calculation section to `main.c`. Burn rate, time to destination, and an approach safety verdict are computed inline using arithmetic, relational, and logical operators. The explicit cast `(sensor_float_t)consumed_kg / mission_elapsed_s` demonstrated the integer-vs-float division distinction. `&&` combined two sensor conditions into a single `bool approach_safe`, and short-circuit evaluation meant the fuel check was skipped when velocity was already out of range. The `sizeof` operator confirmed the byte sizes of `sensor_float_t` and `uint16_t`. Prefix and postfix increment showed the difference between evaluating before and after incrementing. The SOLUTION commit for Phase 5 added `fuel_efficiency` (Challenge 3) and annotated the existing `sensor_cycle` block (Challenge 5 stretch).
+`phase-05_operators` added the navigation calculation section to `main.c`. Burn rate, time to destination, and an approach safety verdict are computed inline using arithmetic, relational, and logical operators. The explicit cast `(sensor_float_t)consumed_kg / mission_elapsed_s` demonstrated the integer-vs-float division distinction. `&&` combined two sensor conditions into a single `bool approach_safe`, and short-circuit evaluation meant the fuel check was skipped when velocity was already out of range. The `sizeof` operator confirmed the byte sizes of `sensor_float_t` and `uint16_t`. The SOLUTION commit added `fuel_efficiency` (Challenge 3) — the natural flight-computer version of the int-vs-float division lesson.
 
 ---
 
@@ -199,16 +199,16 @@ flowchart LR
 **[`main.c:31–47`](main.c#L31)**
 The register globals and named constants. `ENGINE_CTRL` and `ENGINE_STATUS` are plain `uint32_t` global variables — the "hardware register" abstraction is the naming and the operations, not a special type. The bit positions are `const uint8_t` variables rather than `#define` macros — `#define` is Phase 15; these serve the same readability purpose with the means available now. `THROTTLE_MASK = 0x0Fu` carries a comment explaining it is the mask applied after shifting — that note is load-bearing for Challenge 4.
 
-**[`main.c:314–328`](main.c#L314) — set and clear**
+**[`main.c:258–272`](main.c#L258) — set and clear**
 The set (`|=`) and clear (`&=`) operations use the identical `1u << THRUSTER_N_BIT` mask construction — the only difference is the operator and, for clear, the `~` complement. Read the two lines side by side: `|=` with the mask sets the bit; `&=` with the complement clears it. The `printf` after each operation prints the full 32-bit register in hex so you can trace each bit change directly.
 
-**[`main.c:331–335`](main.c#L331) — toggle**
+**[`main.c:275–279`](main.c#L275) — toggle**
 Two consecutive XOR operations with the same mask. The first clears thruster 2 (which was set), the second restores it. Reading `0x00000074` → `0x00000070` → `0x00000074` in the output confirms that XOR is its own inverse — two applications with the same mask cancel out.
 
-**[`main.c:339`](main.c#L339) — throttle extraction**
+**[`main.c:283`](main.c#L283) — throttle extraction**
 `(ENGINE_CTRL >> THROTTLE_SHIFT) & THROTTLE_MASK` is the two-step pattern: shift right by 4 to bring bits 4–7 into positions 0–3, then AND with `0x0F` to zero positions 4 and above. With `ENGINE_CTRL = 0x00000074`, shifting right by 4 gives `0x00000007`; masking gives `7`. This is what Challenge 4 asks you to trace in reverse order.
 
-**[`main.c:344–354`](main.c#L344) — STATUS fault test**
+**[`main.c:288–298`](main.c#L288) — STATUS fault test**
 The test expression `(ENGINE_STATUS & (1u << CRITICAL_FAULT_BIT)) != 0` isolates the target bit with AND, then the `!= 0` converts the integer result to `bool`. Both `SENSOR_FAULT_BIT` (bit 0) and `CRITICAL_FAULT_BIT` (bit 2) were set, so `ENGINE_STATUS = 0x00000005` — binary `0b00000101` — and both tests report "SET".
 
 ---
