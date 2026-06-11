@@ -338,15 +338,158 @@ int main(void) {
     uint8_t battery_level = (uint8_t)((ENGINE_STATUS >> BATTERY_LEVEL_SHIFT) & BATTERY_LEVEL_MASK);
     printf("Battery level readback : %u  (expected 12)\n\n", battery_level);
 
-    printf("Enter command: ");
-    char cmd = '\0';
-    scanf(" %c", &cmd);
-    printf("Command received: %c - standing by.\n\n", cmd);
+    /* --- Command loop --------------------------------------------------- */
 
-    char crew_id = '\0';
-    printf("Enter crew ID: ");
-    scanf(" %c", &crew_id);
-    printf("Crew ID confirmed: %c\n", crew_id);
+    /* Reset ENGINE_STATUS before entering the command loop. The phase-06 register
+     * demo set fault bits deliberately to demonstrate STATUS operations; clearing
+     * them here puts the computer in a known state for active operation. */
+    ENGINE_STATUS = 0u;
 
+    printf("=========================================\n");
+    printf("  CALYPSO COMMAND LOOP ACTIVE\n");
+    printf("  n=advance phase  s=sensor scan  e=emergency  q=quit\n");
+    printf("=========================================\n\n");
+
+    while (1) {
+        /* Ternary chain: produces the phase name without an if block */
+        const char *phase_name =
+            (current_phase == PREFLIGHT) ? "PREFLIGHT" :
+            (current_phase == LAUNCH)    ? "LAUNCH"    :
+            (current_phase == CRUISE)    ? "CRUISE"    :
+            (current_phase == APPROACH)  ? "APPROACH"  : "DOCKED";
+
+        /* do-while: prompt once; re-prompt if the command is unrecognised.
+         * The guarantee that the body runs before the condition is checked
+         * means cmd is always initialised by a real read -- no sentinel needed. */
+        char cmd;
+        do {
+            printf("[%s] Command (n/s/e/q): ", phase_name);
+            scanf(" %c", &cmd);
+            if (cmd != 'n' && cmd != 's' && cmd != 'e' && cmd != 'q') {
+                printf("Unknown command '%c'.\n", cmd);
+            }
+        } while (cmd != 'n' && cmd != 's' && cmd != 'e' && cmd != 'q');
+
+        /* 'q' -- quit: break exits the while(1) command loop */
+        if (cmd == 'q') {
+            printf("Shutdown command received.\n");
+            break;
+        }
+
+        /* 'e' -- emergency: set fault bits, then jump to the cleanup label */
+        if (cmd == 'e') {
+            ENGINE_STATUS |= ((uint32_t)1u << SENSOR_FAULT_BIT);
+            ENGINE_STATUS |= ((uint32_t)1u << CRITICAL_FAULT_BIT);
+            printf("EMERGENCY COMMAND RECEIVED -- initiating shutdown\n");
+            goto emergency_shutdown;
+        }
+
+        /* 'n' -- advance mission phase */
+        if (cmd == 'n') {
+            /*
+             * switch displays phase-specific status. Intentional fallthrough from
+             * LAUNCH into CRUISE means both phases print the engine-active report.
+             * Phase advancement happens after the switch, not inside it -- the
+             * fallthrough body reads the register but does not modify current_phase,
+             * so there is no risk of a double-advance.
+             */
+            switch (current_phase) {
+                case PREFLIGHT:
+                    printf("  Pre-flight: all systems nominal\n");
+                    break;
+
+                case LAUNCH:
+                    printf("  Launch: ignition sequence active\n");
+                    /* FALLTHROUGH -- LAUNCH and CRUISE both report the active-burn state */
+                case CRUISE:
+                    {
+                        uint8_t thr = (uint8_t)((ENGINE_CTRL >> THROTTLE_SHIFT) & THROTTLE_MASK);
+                        printf("  Active burn: throttle=%u | fuel=%" PRIu16 " kg | STATUS=0x%08" PRIX32 "\n",
+                               thr, fuel_level, ENGINE_STATUS);
+                    }
+                    break;
+
+                case APPROACH:
+                    printf("  Approach: decelerating -- velocity %.2f km/s\n", velocity_kms);
+                    break;
+
+                case DOCKED:
+                    printf("  Docked: mission complete -- no further advance\n");
+                    break;
+
+                default:
+                    break;
+            }
+
+            /* Advance the phase; ternary names the new state for the log line */
+            if (current_phase != DOCKED) {
+                current_phase = (enum MissionPhase)((int)current_phase + 1);
+                const char *new_name =
+                    (current_phase == LAUNCH)   ? "LAUNCH"   :
+                    (current_phase == CRUISE)   ? "CRUISE"   :
+                    (current_phase == APPROACH) ? "APPROACH" :
+                    (current_phase == DOCKED)   ? "DOCKED"   : "UNKNOWN";
+                printf("  >> Phase advanced to %s\n\n", new_name);
+            } else {
+                printf("\n");
+            }
+        }
+
+        /* 's' -- periodic sensor scan */
+        if (cmd == 's') {
+            /*
+             * NOTE: arrays are covered formally in Phase 9 -- these small
+             * fixed-size local arrays are used here purely to give the for
+             * loop something to iterate over.
+             */
+            sensor_float_t sensor_readings[3] = {
+                cabin_pressure_kpa,
+                velocity_kms,
+                (sensor_float_t)fuel_level
+            };
+            bool sensor_faults_scan[3] = {
+                (cabin_pressure_kpa < 80.0f || cabin_pressure_kpa > 120.0f),
+                false,
+                (fuel_level < 50)
+            };
+            const int SENSOR_COUNT = 3;
+
+            printf("--- Periodic Sensor Scan ---\n");
+            for (int i = 0; i < SENSOR_COUNT; i++) {
+                if (sensor_faults_scan[i]) {
+                    printf("  Sensor %d: FAULTED -- skipping\n", i);
+                    continue; /* skip the normal reading line for this sensor */
+                }
+                /* if/else if/else: classify the reading by threshold */
+                const char *level;
+                if (sensor_readings[i] > 500.0f) {
+                    level = "HIGH";
+                } else if (sensor_readings[i] > 50.0f) {
+                    level = "NOMINAL";
+                } else {
+                    level = "LOW";
+                }
+                printf("  Sensor %d: %8.3f  [%s]\n", i, sensor_readings[i], level);
+            }
+            printf("\n");
+        }
+
+        /* End-of-cycle critical fault check -- goto if fault was set this cycle */
+        bool fault_now = (ENGINE_STATUS & ((uint32_t)1u << CRITICAL_FAULT_BIT)) != 0;
+        if (fault_now) {
+            printf("CRITICAL FAULT DETECTED -- emergency shutdown\n");
+            goto emergency_shutdown;
+        }
+    }
+
+    printf("\nCalypso offline.\n");
+    return 0;
+
+emergency_shutdown:
+    ENGINE_CTRL = 0u;
+    printf("\n--- EMERGENCY SHUTDOWN ---\n");
+    printf("ENGINE_CTRL cleared    : 0x%08" PRIX32 "\n", ENGINE_CTRL);
+    printf("ENGINE_STATUS          : 0x%08" PRIX32 "\n", ENGINE_STATUS);
+    printf("Calypso offline.\n");
     return 0;
 }
