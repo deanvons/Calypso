@@ -33,9 +33,9 @@ uint32_t ENGINE_STATUS = 0u;
 
 /* Thruster bit positions in ENGINE_CTRL */
 const uint8_t THRUSTER_0_BIT = 0;
-const uint8_t THRUSTER_1_BIT = 1;
+const uint8_t THRUSTER_1_BIT = 1; /* completes the bit map -- not exercised in this phase */
 const uint8_t THRUSTER_2_BIT = 2;
-const uint8_t THRUSTER_3_BIT = 3;
+const uint8_t THRUSTER_3_BIT = 3; /* completes the bit map -- not exercised in this phase */
 
 /* Throttle field in ENGINE_CTRL -- bits 4-7 */
 const uint8_t THROTTLE_SHIFT = 4;
@@ -43,7 +43,7 @@ const uint8_t THROTTLE_MASK  = 0x0Fu; /* mask applied after right-shifting by TH
 
 /* Fault bit positions in ENGINE_STATUS */
 const uint8_t SENSOR_FAULT_BIT   = 0;
-const uint8_t TEMP_WARNING_BIT   = 1;
+const uint8_t TEMP_WARNING_BIT   = 1; /* completes the bit map -- not exercised in this phase */
 const uint8_t CRITICAL_FAULT_BIT = 2;
 
 int main(void) {
@@ -221,7 +221,7 @@ int main(void) {
     printf("Approach safe        : %s\n", approach_safe ? "YES" : "NO");
     printf("  velocity (%.2f km/s) <= 2.0   : %s\n",
            velocity_kms, (velocity_kms <= 2.0f) ? "true" : "false");
-    printf("  fuel (%u kg) >= 50             : %s\n\n",
+    printf("  fuel (%" PRIu16 " kg) >= 50             : %s\n\n",
            fuel_level, (fuel_level >= 50) ? "true" : "false");
 
     /* SOLUTION (Challenge 3): fuel_efficiency without and with explicit cast.
@@ -232,7 +232,7 @@ int main(void) {
      * making both operands float and preserving the fractional part. */
     /* NOTE: integer division happens first; the outer cast converts the truncated result to float */
     sensor_float_t fuel_efficiency_int = (sensor_float_t)(distance_to_destination_km / fuel_level);
-    printf("Fuel efficiency (int div) : %6.2f km/kg  (%" PRIu32 " / %u = %u -- truncated)\n",
+    printf("Fuel efficiency (int div) : %6.2f km/kg  (%" PRIu32 " / %" PRIu16 " = %" PRIu32 " -- truncated)\n",
            fuel_efficiency_int,
            distance_to_destination_km, fuel_level,
            distance_to_destination_km / fuel_level);
@@ -251,32 +251,40 @@ int main(void) {
     /* --- Engine control register operations ------------------------------ */
 
     printf("--- Engine Control ---\n");
-    printf("ENGINE_CTRL initial    : 0x%08X\n", ENGINE_CTRL);
+    printf("ENGINE_CTRL initial    : 0x%08" PRIX32 "\n", ENGINE_CTRL);
 
     /* Set: OR with a single-bit mask.
      * Bit N ORed with 1 becomes 1; every other bit is ORed with 0 and stays unchanged. */
-    ENGINE_CTRL |= (1u << THRUSTER_0_BIT);
-    printf("Set thruster 0         : 0x%08X  (|= 1u << %u)\n", ENGINE_CTRL, THRUSTER_0_BIT);
+    ENGINE_CTRL |= ((uint32_t)1u << THRUSTER_0_BIT);
+    printf("Set thruster 0         : 0x%08" PRIX32 "  (|= 1u << %u)\n", ENGINE_CTRL, THRUSTER_0_BIT);
 
-    ENGINE_CTRL |= (1u << THRUSTER_2_BIT);
-    printf("Set thruster 2         : 0x%08X  (|= 1u << %u)\n", ENGINE_CTRL, THRUSTER_2_BIT);
+    ENGINE_CTRL |= ((uint32_t)1u << THRUSTER_2_BIT);
+    printf("Set thruster 2         : 0x%08" PRIX32 "  (|= 1u << %u)\n", ENGINE_CTRL, THRUSTER_2_BIT);
 
     /* NOTE: cast to uint32_t ensures the shift operates on the full register width */
     ENGINE_CTRL |= ((uint32_t)7u << THROTTLE_SHIFT);
-    printf("Set throttle = 7       : 0x%08X  (|= 7u << %u)\n", ENGINE_CTRL, THROTTLE_SHIFT);
+    printf("Set throttle = 7       : 0x%08" PRIX32 "  (|= 7u << %u)\n", ENGINE_CTRL, THROTTLE_SHIFT);
 
     /* Clear: AND with the bitwise complement of the mask.
      * ~(1u << N) has 0 only at bit N and 1 everywhere else.
-     * A bit ANDed with 0 becomes 0; ANDed with 1, it stays unchanged. */
-    ENGINE_CTRL &= ~(1u << THRUSTER_0_BIT);
-    printf("Clear thruster 0       : 0x%08X  (&= ~(1u << %u))\n", ENGINE_CTRL, THRUSTER_0_BIT);
+     * A bit ANDed with 0 becomes 0; ANDed with 1, it stays unchanged.
+     *
+     * LEARNING MOMENT -- type width and bitwise complement:
+     * 1u has type unsigned int, not uint32_t. On a C99-conformant target
+     * where unsigned int is 16 bits, ~(1u << 0) produces a 16-bit 0xFFFE.
+     * Zero-extending that to 32 bits on assignment gives 0x0000FFFE, which
+     * ANDs bits 16-31 to zero and silently corrupts the upper half of the
+     * register. The throttle-set above already carries the (uint32_t) cast
+     * for this reason. Always shift on the register's own type. */
+    ENGINE_CTRL &= ~((uint32_t)1u << THRUSTER_0_BIT);
+    printf("Clear thruster 0       : 0x%08" PRIX32 "  (&= ~(1u << %u))\n", ENGINE_CTRL, THRUSTER_0_BIT);
 
     /* Toggle: XOR with the mask. Bit N XORed with 1 flips; XORed with 0, unchanged. */
-    ENGINE_CTRL ^= (1u << THRUSTER_2_BIT);
-    printf("Toggle thruster 2 off  : 0x%08X  (^= 1u << %u)\n", ENGINE_CTRL, THRUSTER_2_BIT);
+    ENGINE_CTRL ^= ((uint32_t)1u << THRUSTER_2_BIT);
+    printf("Toggle thruster 2 off  : 0x%08" PRIX32 "  (^= 1u << %u)\n", ENGINE_CTRL, THRUSTER_2_BIT);
 
-    ENGINE_CTRL ^= (1u << THRUSTER_2_BIT);
-    printf("Toggle thruster 2 on   : 0x%08X  (^= 1u << %u)\n\n", ENGINE_CTRL, THRUSTER_2_BIT);
+    ENGINE_CTRL ^= ((uint32_t)1u << THRUSTER_2_BIT);
+    printf("Toggle thruster 2 on   : 0x%08" PRIX32 "  (^= 1u << %u)\n\n", ENGINE_CTRL, THRUSTER_2_BIT);
 
     /* Extract throttle field: shift right to bring bits 4-7 to positions 0-3,
      * then AND with THROTTLE_MASK (0x0F) to discard everything above bit 3. */
@@ -285,13 +293,13 @@ int main(void) {
            throttle_level, THROTTLE_SHIFT, THROTTLE_MASK);
 
     /* Simulate fault conditions in ENGINE_STATUS */
-    ENGINE_STATUS |= (1u << SENSOR_FAULT_BIT);
-    ENGINE_STATUS |= (1u << CRITICAL_FAULT_BIT);
-    printf("ENGINE_STATUS          : 0x%08X\n", ENGINE_STATUS);
+    ENGINE_STATUS |= ((uint32_t)1u << SENSOR_FAULT_BIT);
+    ENGINE_STATUS |= ((uint32_t)1u << CRITICAL_FAULT_BIT);
+    printf("ENGINE_STATUS          : 0x%08" PRIX32 "\n", ENGINE_STATUS);
 
     /* Test: AND isolates the target bit; the rest become 0. != 0 converts to bool. */
-    bool fault_critical = (ENGINE_STATUS & (1u << CRITICAL_FAULT_BIT)) != 0;
-    bool fault_sensor   = (ENGINE_STATUS & (1u << SENSOR_FAULT_BIT))   != 0;
+    bool fault_critical = (ENGINE_STATUS & ((uint32_t)1u << CRITICAL_FAULT_BIT)) != 0;
+    bool fault_sensor   = (ENGINE_STATUS & ((uint32_t)1u << SENSOR_FAULT_BIT))   != 0;
     printf("Critical fault         : %s  (bit %u)\n",
            fault_critical ? "SET" : "clear", CRITICAL_FAULT_BIT);
     printf("Sensor fault           : %s  (bit %u)\n\n",

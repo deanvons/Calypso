@@ -150,13 +150,13 @@ flowchart LR
 
 - Add `ENGINE_CTRL` and `ENGINE_STATUS` as `uint32_t` global variables simulating hardware registers
 - Define named `const uint8_t` bit-position constants for thruster bits, throttle field, and status fault bits — no hard-coded hex literals
-- Set individual thruster bits with `ENGINE_CTRL |= (1u << THRUSTER_N_BIT)`
-- Clear a thruster bit with `ENGINE_CTRL &= ~(1u << THRUSTER_N_BIT)`
-- Toggle a thruster bit with `ENGINE_CTRL ^= (1u << THRUSTER_N_BIT)`
-- Test a fault flag with `(ENGINE_STATUS & (1u << CRITICAL_FAULT_BIT)) != 0`
-- Set the throttle field (bits 4–7) with a shifted value: `ENGINE_CTRL |= ((uint32_t)level << THROTTLE_SHIFT)`
+- Set individual thruster bits with `ENGINE_CTRL |= ((uint32_t)1u << THRUSTER_N_BIT)`
+- Clear a thruster bit with `ENGINE_CTRL &= ~((uint32_t)1u << THRUSTER_N_BIT)`
+- Toggle a thruster bit with `ENGINE_CTRL ^= ((uint32_t)1u << THRUSTER_N_BIT)`
+- Test a fault flag with `(ENGINE_STATUS & ((uint32_t)1u << CRITICAL_FAULT_BIT)) != 0`
+- Set the throttle field (bits 4–7) with a shifted value: `ENGINE_CTRL |= ((uint32_t)7u << THROTTLE_SHIFT)`
 - Extract the throttle field with `(ENGINE_CTRL >> THROTTLE_SHIFT) & THROTTLE_MASK`
-- Print the register value in hex (`%08X`) after each operation so the bit pattern is visible
+- Print the register value in hex after each operation so the bit pattern is visible
 
 ---
 
@@ -190,7 +190,7 @@ flowchart LR
 | **Extract a bit field** | `(reg >> shift) & mask` — right-shift brings the target bits to position 0, then AND removes everything above. For bits 4–7: `(reg >> 4) & 0x0Fu` gives a value in 0–15. |
 | **Left shift (`<<`)** | `x << n` moves every bit n positions toward the most significant bit, filling the vacated low bits with 0. For unsigned types with no overflow, this multiplies by 2ⁿ. `1u << N` places a single 1 at bit position N. |
 | **Right shift (`>>`)** | `x >> n` moves every bit n positions toward the least significant bit. For unsigned types this divides by 2ⁿ, discarding the remainder. Used to bring a bit field into the low positions for masking. |
-| **`1u << N` pattern** | The standard idiom for constructing a single-bit mask. The `u` suffix makes the literal `unsigned int`, ensuring the shift is well-defined for all bit positions in a 32-bit unsigned register. |
+| **`1u << N` pattern** | The standard idiom for constructing a single-bit mask. The `u` suffix makes the literal `unsigned int`. When the result is assigned to a `uint32_t` register — or when `~` is applied — cast to `uint32_t` first: `(uint32_t)1u << N`. Without the cast, on a target where `unsigned int` is 16 bits, the complement is 16-bit wide; zero-extending it to 32 bits on assignment corrupts the upper half of the register. |
 
 ---
 
@@ -199,17 +199,17 @@ flowchart LR
 **[`main.c:31–47`](main.c#L31)**
 The register globals and named constants. `ENGINE_CTRL` and `ENGINE_STATUS` are plain `uint32_t` global variables — the "hardware register" abstraction is the naming and the operations, not a special type. The bit positions are `const uint8_t` variables rather than `#define` macros — `#define` is Phase 15; these serve the same readability purpose with the means available now. `THROTTLE_MASK = 0x0Fu` carries a comment explaining it is the mask applied after shifting — that note is load-bearing for Challenge 4.
 
-**[`main.c:258–272`](main.c#L258) — set and clear**
-The set (`|=`) and clear (`&=`) operations use the identical `1u << THRUSTER_N_BIT` mask construction — the only difference is the operator and, for clear, the `~` complement. Read the two lines side by side: `|=` with the mask sets the bit; `&=` with the complement clears it. The `printf` after each operation prints the full 32-bit register in hex so you can trace each bit change directly.
+**[`main.c:258–280`](main.c#L258) — set and clear**
+The set (`|=`) and clear (`&=`) operations use the identical `(uint32_t)1u << THRUSTER_N_BIT` mask construction — the only difference is the operator and, for clear, the `~` complement. The block comment above the clear operation is a learning moment: it explains why the `(uint32_t)` cast is required when applying `~`, and what goes wrong on a 16-bit `unsigned int` target without it.
 
-**[`main.c:275–279`](main.c#L275) — toggle**
+**[`main.c:283–287`](main.c#L283) — toggle**
 Two consecutive XOR operations with the same mask. The first clears thruster 2 (which was set), the second restores it. Reading `0x00000074` → `0x00000070` → `0x00000074` in the output confirms that XOR is its own inverse — two applications with the same mask cancel out.
 
-**[`main.c:283`](main.c#L283) — throttle extraction**
+**[`main.c:291`](main.c#L291) — throttle extraction**
 `(ENGINE_CTRL >> THROTTLE_SHIFT) & THROTTLE_MASK` is the two-step pattern: shift right by 4 to bring bits 4–7 into positions 0–3, then AND with `0x0F` to zero positions 4 and above. With `ENGINE_CTRL = 0x00000074`, shifting right by 4 gives `0x00000007`; masking gives `7`. This is what Challenge 4 asks you to trace in reverse order.
 
-**[`main.c:288–298`](main.c#L288) — STATUS fault test**
-The test expression `(ENGINE_STATUS & (1u << CRITICAL_FAULT_BIT)) != 0` isolates the target bit with AND, then the `!= 0` converts the integer result to `bool`. Both `SENSOR_FAULT_BIT` (bit 0) and `CRITICAL_FAULT_BIT` (bit 2) were set, so `ENGINE_STATUS = 0x00000005` — binary `0b00000101` — and both tests report "SET".
+**[`main.c:296–306`](main.c#L296) — STATUS fault test**
+The test expression `(ENGINE_STATUS & ((uint32_t)1u << CRITICAL_FAULT_BIT)) != 0` isolates the target bit with AND, then the `!= 0` converts the integer result to `bool`. Both `SENSOR_FAULT_BIT` (bit 0) and `CRITICAL_FAULT_BIT` (bit 2) were set, so `ENGINE_STATUS = 0x00000005` — binary `0b00000101` — and both tests report "SET".
 
 ---
 
