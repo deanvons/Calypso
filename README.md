@@ -190,7 +190,7 @@ stateDiagram-v2
 The loop has no exit condition in its header — exit is entirely via `break` (line 376, quit command) or `goto` (lines 384 and 481, fault paths). This is the embedded-systems structure: the loop body is the program, and every exit path is named explicitly at the point where the decision is made.
 
 **[`main.c:365–372`](main.c#L365) — `do-while` input validator**
-The body reads a character and checks it before the condition is tested. This guarantees `cmd` is always set by a real read — no sentinel value or pre-assignment needed before the loop. Challenge 2 asks you to rewrite this as a plain `while` and identify what extra code is required.
+The body reads a character and checks it before the condition is tested. The `'\0'` initialiser on `cmd` is a defensive floor against `scanf` returning EOF on a closed pipe — it is not a sentinel the loop depends on. In normal terminal operation, the do-while guarantee means `cmd` is always set by a real `scanf` read before it is used. Challenge 2 asks you to rewrite this as a plain `while` and identify what extra setup code is required.
 
 **[`main.c:355–360`](main.c#L355) and [`main.c:427–435`](main.c#L427) — ternary chains**
 Both phase-name ternary chains produce a string value without an `if` block. The pattern `(condition) ? "value" : (next condition) ? ...` chains as many cases as needed; the final `: "UNKNOWN"` is the catch-all arm. Ternary is the right tool when every branch produces a value and none has side effects.
@@ -280,7 +280,7 @@ The sensor scan loop uses `continue` to skip faulted sensors. Add a second thres
 In the sensor scan `for` loop, `continue` jumps to `i++` before re-checking `i < SENSOR_COUNT`. If you rewrote the same loop as a `while` loop, where would `continue` jump instead? Rewrite the loop as a `while` — mark clearly in your version where `continue` lands — and explain what you must add to prevent the loop from hanging on the iteration where `continue` fires.
 
 **Challenge 5 — Additive (stretch)**
-Add an `'e'` (emergency) command to the command loop. When the user types `'e'`, set both `SENSOR_FAULT_BIT` and `CRITICAL_FAULT_BIT` in `ENGINE_STATUS` using the bitmask pattern, print `"EMERGENCY COMMAND RECEIVED — initiating shutdown"`, and jump to `emergency_shutdown`. Confirm that the cleanup label is reached and the engine register is cleared correctly before `return`.
+The `emergency_shutdown` block currently clears `ENGINE_CTRL` to zero and prints the register value, but gives no indication of which thrusters were active at the moment of shutdown. Extend the block: before clearing the register, add a `for` loop over bit positions 0–3 and use the bitmask test pattern from Phase 6 to check which thruster bits are set. For each active thruster, print its number. The four bit-position constants `THRUSTER_0_BIT` through `THRUSTER_3_BIT` are already declared.
 
 ---
 

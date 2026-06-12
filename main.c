@@ -359,8 +359,9 @@ int main(void) {
             (current_phase == APPROACH)  ? "APPROACH"  : "DOCKED";
 
         /* do-while: prompt once; re-prompt if the command is unrecognised.
-         * The guarantee that the body runs before the condition is checked
-         * means cmd is always initialised by a real read -- no sentinel needed. */
+         * The '\0' initialiser guards against UB if scanf returns EOF on a closed
+         * pipe; it is not a sentinel the loop depends on. In normal terminal
+         * operation the do-while guarantee means cmd is set by scanf before use. */
         char cmd = '\0';
         do {
             printf("[%s] Command (n/s/e/q): ", phase_name);
