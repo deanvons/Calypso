@@ -33,9 +33,9 @@ uint32_t ENGINE_STATUS = 0u;
 
 /* Thruster bit positions in ENGINE_CTRL */
 const uint8_t THRUSTER_0_BIT = 0;
-const uint8_t THRUSTER_1_BIT = 1; /* completes the bit map -- not exercised in this phase */
+const uint8_t THRUSTER_1_BIT = 1;
 const uint8_t THRUSTER_2_BIT = 2;
-const uint8_t THRUSTER_3_BIT = 3; /* completes the bit map -- not exercised in this phase */
+const uint8_t THRUSTER_3_BIT = 3;
 
 /* Throttle field in ENGINE_CTRL -- bits 4-7 */
 const uint8_t THROTTLE_SHIFT = 4;
@@ -43,7 +43,7 @@ const uint8_t THROTTLE_MASK  = 0x0Fu; /* mask applied after right-shifting by TH
 
 /* Fault bit positions in ENGINE_STATUS */
 const uint8_t SENSOR_FAULT_BIT   = 0;
-const uint8_t TEMP_WARNING_BIT   = 1; /* completes the bit map -- not exercised in this phase */
+const uint8_t TEMP_WARNING_BIT   = 1;
 const uint8_t CRITICAL_FAULT_BIT = 2;
 
 int main(void) {
@@ -443,10 +443,11 @@ int main(void) {
              * fixed-size local arrays are used here purely to give the for
              * loop something to iterate over.
              */
+            /* SOLUTION (Challenge 3): sensor_readings[2] is set high to demonstrate the HIGH_WARN trigger */
             sensor_float_t sensor_readings[3] = {
                 cabin_pressure_kpa,
                 velocity_kms,
-                (sensor_float_t)fuel_level
+                3200.0f
             };
             bool sensor_faults_scan[3] = {
                 (cabin_pressure_kpa < 80.0f || cabin_pressure_kpa > 120.0f),
@@ -461,6 +462,14 @@ int main(void) {
                     printf("  Sensor %d: FAULTED -- skipping\n", i);
                     continue; /* skip the normal reading line for this sensor */
                 }
+                /* SOLUTION (Challenge 3): second threshold check -- set TEMP_WARNING_BIT and continue */
+                const sensor_float_t HIGH_WARN = 2000.0f;
+                if (sensor_readings[i] > HIGH_WARN) {
+                    ENGINE_STATUS |= ((uint32_t)1u << TEMP_WARNING_BIT);
+                    printf("  Sensor %d: WARNING -- reading %.3f exceeds HIGH_WARN threshold\n",
+                           i, sensor_readings[i]);
+                    continue;
+                }
                 /* if/else if/else: classify the reading by threshold */
                 const char *level;
                 if (sensor_readings[i] > 500.0f) {
@@ -472,7 +481,8 @@ int main(void) {
                 }
                 printf("  Sensor %d: %8.3f  [%s]\n", i, sensor_readings[i], level);
             }
-            printf("\n");
+            /* SOLUTION (Challenge 3): print ENGINE_STATUS to confirm TEMP_WARNING_BIT was set */
+            printf("ENGINE_STATUS          : 0x%08" PRIX32 "\n\n", ENGINE_STATUS);
         }
 
         /* End-of-cycle critical fault check -- goto if fault was set this cycle */
@@ -487,8 +497,19 @@ int main(void) {
     return 0; // NOTE: normal-quit path -- execution does not reach emergency_shutdown label below
 
 emergency_shutdown:
-    ENGINE_CTRL = 0u;
     printf("\n--- EMERGENCY SHUTDOWN ---\n");
+    /* SOLUTION (Challenge 5): report which thrusters were active before clearing the register */
+    {
+        const uint8_t thruster_bits[4] = {
+            THRUSTER_0_BIT, THRUSTER_1_BIT, THRUSTER_2_BIT, THRUSTER_3_BIT
+        };
+        for (int i = 0; i < 4; i++) {
+            if (ENGINE_CTRL & ((uint32_t)1u << thruster_bits[i])) {
+                printf("  Thruster %d was active at shutdown\n", i);
+            }
+        }
+    }
+    ENGINE_CTRL = 0u;
     printf("ENGINE_CTRL cleared    : 0x%08" PRIX32 "\n", ENGINE_CTRL);
     printf("ENGINE_STATUS          : 0x%08" PRIX32 "\n", ENGINE_STATUS);
     printf("Calypso offline.\n");
