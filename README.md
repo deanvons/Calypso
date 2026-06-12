@@ -189,13 +189,13 @@ Compare `engine.h` to `engine.c`: the header has twelve function prototypes and 
 **[`navigation.c`](navigation.c)**
 Each function is one expression: a calculation, a comparison, a return. The `// NOTE:` on `nav_hours_to_dest()` (line 10) points back to the Phase 5 parenthesisation explanation — the logic didn't change, it moved into a named function. Phase 8 adds no new arithmetic; it gives the arithmetic a name.
 
-**[`main.c:48–53`](main.c#L48)**
+**[`main.c:60–62`](main.c#L60)**
 The pass-by-value demonstration. `fuel` is printed before and after the call to `sensors_apply_calibration(fuel, 5)` — the value is identical. The returned copy (`fuel_calibrated`) has the offset applied. These two lines prove that the function received a copy, not the original.
 
-**[`main.c:57–67`](main.c#L57)**
+**[`main.c:68–76`](main.c#L68)**
 Navigation section: three function calls replace the three inline calculations from Phase 5. `nav_burn_rate()`, `nav_hours_to_dest()`, and `nav_approach_safe()` take the same arguments and produce the same values — the refactoring added a name and a boundary, not a new computation.
 
-**[`main.c:70–92`](main.c#L70)**
+**[`main.c:80–104`](main.c#L80)**
 Engine control section: every register write is now a named function call. Compare `engine_enable_thruster(0)` here to `ENGINE_CTRL |= ((uint32_t)1u << THRUSTER_0_BIT)` in Phase 7 — the intent is the same, the mechanism is hidden. `main.c` never names a bit position.
 
 ---

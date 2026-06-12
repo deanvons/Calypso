@@ -28,6 +28,7 @@ static const uint8_t TEMP_WARNING_BIT   = 1;
 static const uint8_t CRITICAL_FAULT_BIT = 2;
 
 /* Map thruster number 0-3 to its bit position in ENGINE_CTRL */
+// NOTE: thruster >= 4 silently maps to bit 0 -- avoids undefined shift past register width
 static uint8_t thruster_bit(uint8_t thruster) {
     return (thruster < 4u) ? thruster : 0u;
 }

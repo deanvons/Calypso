@@ -123,6 +123,7 @@ int main(void) {
             (current_phase == APPROACH)  ? "APPROACH"  : "DOCKED";
 
         /* do-while: prompt once; re-prompt on unrecognised input */
+        // NOTE: '\0' guards against UB if scanf returns EOF without writing to cmd
         char cmd = '\0';
         do {
             printf("[%s] Command (n/s/e/q): ", phase_name);
