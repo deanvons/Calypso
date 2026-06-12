@@ -361,7 +361,7 @@ int main(void) {
         /* do-while: prompt once; re-prompt if the command is unrecognised.
          * The guarantee that the body runs before the condition is checked
          * means cmd is always initialised by a real read -- no sentinel needed. */
-        char cmd;
+        char cmd = '\0';
         do {
             printf("[%s] Command (n/s/e/q): ", phase_name);
             scanf(" %c", &cmd);
@@ -449,7 +449,7 @@ int main(void) {
             };
             bool sensor_faults_scan[3] = {
                 (cabin_pressure_kpa < 80.0f || cabin_pressure_kpa > 120.0f),
-                false,
+                (velocity_kms > 25.0f), /* NOTE: 32.7 km/s exceeds calibration range -- sensor faulted */
                 (fuel_level < 50)
             };
             const int SENSOR_COUNT = 3;
@@ -483,7 +483,7 @@ int main(void) {
     }
 
     printf("\nCalypso offline.\n");
-    return 0;
+    return 0; // NOTE: normal-quit path -- execution does not reach emergency_shutdown label below
 
 emergency_shutdown:
     ENGINE_CTRL = 0u;
