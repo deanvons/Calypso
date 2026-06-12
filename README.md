@@ -1,12 +1,12 @@
-# Phase README — Mission State Machine
+# Phase README — Modular Architecture
 
-> **Phase 07 — Control Flow** | Calypso · Core C
+> **Phase 08 — Functions and Program Organisation** | Calypso · Core C
 
-Giving Calypso a persistent runtime loop, a mission state machine, and fault-response behaviour using C's control-flow constructs.
+Splitting a 490-line monolith into named modules — each with a header that declares its interface and a source file that keeps its implementation private.
 
-By the end of Phase 6, `main.c` can read sensors, run navigation calculations, and manipulate the engine register — but it executes from top to bottom and exits. A real flight computer does none of that. It runs continuously, waits for operator commands, enforces which mission-phase transitions are legal, and jumps immediately to an emergency shutdown if a critical fault fires. All three of those behaviours need control flow: a loop to keep the computer alive, a selection construct to branch on mission state, and a jump construct to escape a fault condition without returning through normal code. This phase introduces every major C control-flow construct and puts each one to work in the Calypso flight computer.
+By the end of Phase 7, `main.c` runs the entire flight computer: sensor reads, navigation calculations, engine register operations, the command loop, the state machine, and the emergency shutdown path all share one file and one scope. Everything can see and overwrite everything else. The critical fault threshold appears in two separate `switch` cases; `ENGINE_CTRL` is written from multiple locations with no boundary between them; adding a new sensor read means scrolling past 400 lines of code that has nothing to do with sensors. This phase introduces functions and header files as the mechanism for enforcing boundaries — each module owns its data, declares what it offers, and hides how it works.
 
-> **A note on scope.** All code remains in `main.c` — the sensor suite, navigation calculations, and engine register operations from earlier phases are already there. Named functions, separate source files, and module headers are the subject of Phase 8. If `main.c` starts to feel unwieldy, that observation is intentional — Phase 8 resolves it.
+> **A note on scope.** Pass-by-value is demonstrated explicitly in this phase using `sensors_apply_calibration()`. Modifying data through a pointer — the mechanism that lets a function change a caller's variable — is the subject of Phase 10. Any forward mention of pointers in this phase is a preview, not a requirement.
 
 ---
 
@@ -20,7 +20,6 @@ By the end of Phase 6, `main.c` can read sensors, run navigation calculations, a
 - [Learning goals](#-learning-goals)
 - [Key concepts](#-key-concepts)
 - [What to notice in the code](#-what-to-notice-in-the-code)
-- [What this phase revealed](#-what-this-phase-revealed)
 - [Running this branch](#-running-this-branch)
 - [Challenges for students](#-challenges-for-students)
 - [Thought pieces for the next branch](#-thought-pieces-for-the-next-branch)
@@ -38,8 +37,8 @@ By the end of Phase 6, `main.c` can read sensors, run navigation calculations, a
 | `phase-04_compound-types` | `float` / `double` · `bool` · `enum MissionPhase` · `typedef sensor_float_t` | — |
 | `phase-05_operators` | Arithmetic · relational · logical · `sizeof` · explicit casts | — |
 | `phase-06_bitwise` | Bitmasks · `ENGINE_CTRL` register · `1u << n` shift pattern | — |
-| `📌 phase-07_control-flow` | **`while(1)` command loop · `switch` state machine · `goto` emergency shutdown** | — |
-| `phase-08_functions` | `sensors.c` / `engine.c` / `navigation.c` split · prototypes · pass-by-value | Modular |
+| `phase-07_control-flow` | `while(1)` command loop · `switch` state machine · `goto` emergency shutdown | — |
+| `📌 phase-08_functions` | **`sensors.c` / `engine.c` / `navigation.c` split · prototypes · pass-by-value** | Modular |
 | `phase-09_arrays` | Circular sensor history buffers · `sizeof` element count · `array[i]` ≡ `*(array + i)` | — |
 | `phase-10_pointers` | `&` / `*` · pointer arithmetic · `const T*` vs `T* const` · `**` | — |
 | `phase-11_strings` | `char` arrays · `strncpy` / `strcmp` / `strlen` · null terminator | — |
@@ -64,106 +63,97 @@ git log --oneline          # find the SOLUTION commit hash
 git show <hash>            # inspect the solution in isolation
 ```
 
-### Challenge 1 — Trace the clear-bit operation
+### Challenge 1 — Intentional fallthrough and `-Wimplicit-fallthrough`
 
-Mask: `1u << 2 = 0b0100`. Complement: `~0b0100 = 0b1011`. AND with `reg = 0b1101`: `0b1101 & 0b1011 = 0b1001` — bit 2 (which was 1) is cleared; bits 0, 1, and 3 are unchanged. The AND truth table is the key: ANDing any bit with 1 produces the original value; ANDing with 0 forces the result to 0. The complement mask places a 0 only at the target bit position and 1 everywhere else, so only the target bit is affected.
+When `current_phase == LAUNCH`, the switch enters `case LAUNCH:` and runs in order: first `printf("  Launch: ignition sequence active\n")`, then falls through — no `break` — into `case CRUISE:`, which executes `printf("  Active burn: throttle=... | fuel=... | STATUS=...")` before the shared `break`. Two `printf` calls execute. `-Wimplicit-fallthrough` warns when a case has no `break` or `return` and execution would continue into the next case — it catches accidental omissions. The `/* FALLTHROUGH */` comment is recognised by GCC and Clang as explicit intent, suppressing the warning exactly where the fallthrough is deliberate rather than a bug.
 
-### Challenge 2 — `1 << 31` on a 32-bit `int`
+### Challenge 2 — `do-while` rewritten as `while`
 
-`1 << 31` shifts a 1 into the sign bit of a signed 32-bit `int`. The C standard (through C17) classifies this as undefined behaviour — the compiler is free to produce any result, and optimisers can eliminate surrounding code on the assumption that UB never occurs. GCC with `-Wall` or `-Wshift-overflow` will warn. `1u` is `unsigned int`, so `1u << 31` is always well-defined for a 32-bit target; the shift produces the largest power of 2 representable in `unsigned int`. On a target where `unsigned int` is 16 bits the safe maximum without the `(uint32_t)` cast is `1u << 15` — which is why the register operations always cast to `(uint32_t)` before shifting.
+The extra line required before the loop is the initialiser: `char cmd = '\0';`. A `while` loop tests its condition before the body executes, so `cmd` must already hold a value that makes the condition true on the first check — any non-valid command character (including `'\0'`) works. The `do-while` form eliminates that requirement because the body always runs before the condition is first tested; `cmd` is set by `scanf` inside the body, so there is nothing to pre-initialise. Both forms produce identical runtime behaviour; the `do-while` version is shorter and expresses the guarantee in the loop structure rather than in a pre-initialiser.
 
-### Challenge 4 — Reversed throttle extraction ordering
+### Challenge 4 — `continue` in `for` vs `while`
 
-With `ENGINE_CTRL = 0xA0u` (throttle field = 10, no thrusters set):
+In a `for` loop, `continue` jumps to the increment expression (`i++`) before re-testing the condition — the increment still runs for the iteration where `continue` fired. In a `while` loop, `continue` jumps directly to the condition check; there is no implicit increment. Rewriting the sensor scan as a `while` requires a manual `i++` placed before each `continue`; without it, `i` stays at the faulted index forever, the condition `i < SENSOR_COUNT` remains true, and the loop never terminates.
 
-- **Code order** — `(0xA0 >> 4) & 0x0F`: right-shift first gives `0x0A = 10`, then masking with `0x0F` gives `10`. Correct.
-- **Reversed order** — `(0xA0 & 0x0F) >> 4`: `THROTTLE_MASK = 0x0Fu` covers only bits 0–3. `0xA0 & 0x0F = 0x00` — the throttle field in bits 4–7 is entirely zeroed before the shift. Result: 0, not 10.
+### Thought piece 1 — Risks of a growing monolithic `main.c`
 
-To make the reversed order correct, the in-place mask must cover bits 4–7: `(ENGINE_CTRL & (THROTTLE_MASK << THROTTLE_SHIFT)) >> THROTTLE_SHIFT`. `0x0F << 4 = 0xF0`. `0xA0 & 0xF0 = 0xA0`. `0xA0 >> 4 = 10`. The lesson: the mask must match the field's actual position in the register at the moment it is applied.
+A single source file with a single flat scope means every variable is visible to every line of code. As the file grows, any change carries the risk of accidentally interfering with unrelated logic — the navigation section can read or overwrite sensor variables, and the compiler cannot tell you that was wrong. There is no way to express intent: "this part of the code owns `ENGINE_CTRL`" is a comment, not an enforceable boundary. This phase resolves that: each module owns its data, and the compiler enforces the boundary through scope and `static`.
 
-### Thought piece 1 — What construct maps a discrete state to a block of behaviour?
+### Thought piece 2 — Restricting who can write to `ENGINE_CTRL`
 
-`switch`. A `switch` statement maps a single integer-valued expression — here an `enum MissionPhase` constant — to one of N labelled blocks. Each `case` label names the value directly, so `case LAUNCH:` reads as clearly as the enum constant itself. The compiler can warn if any enum value is missing a case (`-Wswitch`), giving free exhaustiveness checking. An `if`/`else if` chain could do the same job, but `switch` makes the intent explicit — you are selecting one of a known, finite set of alternatives — and the exhaustiveness warning catches the class of bugs where a new enum value is added without updating all switch sites.
+Moving `ENGINE_CTRL` into `engine.c` as a `static` file-scope variable. `static` at file scope restricts visibility to the translation unit it is declared in — no other `.c` file can name or access the variable. All register writes go through `engine.c` functions (`engine_enable_thruster()`, `engine_set_throttle()`, `engine_reset()`). The compiler enforces this: `main.c` has no declaration of `ENGINE_CTRL`, so any attempt to use the name directly is a compile error.
 
-### Thought piece 2 — How to express "run forever unless told to stop"
+### Thought piece 3 — Defining a constant once and using it everywhere
 
-`while(1)` with `break` inside. In embedded systems, "run forever" is not a workaround — it is the intended behaviour. An MCU has no OS to return to; the loop body is the program. `while(1)` expresses this directly: the loop has no natural exit condition. The exit paths are made explicit at the exact points in the code where the decision is made: `break` on a user quit command, `goto` on a critical fault. A flag variable (`while(!quit)`) would require the flag to be correctly updated before every exit point and checked on every iteration; `while(1)` with `break` puts the exit logic where it belongs and leaves nothing implicit.
-
-### Thought piece 3 — How to jump immediately to emergency shutdown
-
-`goto`. `goto` transfers execution unconditionally to a labelled statement anywhere in the same function. For the emergency shutdown path, `goto emergency_shutdown` jumps immediately past all remaining command-loop iterations to the cleanup block before `return`. The alternative — setting a `critical_fault_detected` flag and testing it at every branch point in the loop — requires the flag to be checked correctly in every code path; one missed check means the loop continues past the fault condition. `goto` to a single cleanup label is the recognised C idiom for this pattern; it appears throughout the Linux kernel and embedded firmware precisely because the jump is unambiguous and the cleanup code runs exactly once.
+`#define`. The preprocessor replaces every occurrence of the name with the literal value before the compiler sees the source. A single `#define CRITICAL_FAULT_TEMP 120` in a shared header means every `switch` case that checks the threshold uses the same value — changing it in one place changes it everywhere. This question is answered in Phase 15, which introduces `#define`, include guards, and conditional compilation throughout the codebase.
 
 ---
 
 ## 💡 Why we made this decision
 
-### The flight computer needs a persistent runtime
+### The single file was deliberate — until now
 
-A program that executes top-to-bottom and exits is not a flight computer — it is a one-shot report. The computer must run continuously: accept commands, check sensor state on every cycle, enforce mission rules, and only exit when explicitly told to or when a fault forces a controlled shutdown. `while(1)` is the C idiom for this. It expresses "this loop has no natural endpoint" without needing a flag variable or a sentinel value. The two defined exit paths — `break` on a quit command, `goto` on a critical fault — are placed exactly where the exit decisions are made, not polled at the top of each iteration.
+Every construct in Phases 1–7 lived in `main.c` so you could see the entire program in one place while learning each feature. By Phase 7 that file is nearly 500 lines holding seven distinct concerns: boot diagnostics, sensor reads, navigation calculations, engine register operations, a command loop, a state machine, and an emergency shutdown path. None of them is isolated from the others. `ENGINE_CTRL` is a global written from at least three separate locations; the critical fault temperature appears in two `switch` cases; nothing prevents the navigation section from accidentally overwriting a sensor variable.
 
-### Discrete states need a selection construct designed for them
+The problem is not the length — it is the coupling. When every name is visible from everywhere, every change carries risk across the whole file. Functions and header files are the fix: a module declares what it offers and hides how it works. `main.c` becomes a caller, not a container.
 
-The `MissionPhase` enum has five named constants. `switch` is the right construct for this: each `case` label names the value it handles, the compiler can verify that every enum value is covered, and the fall-through mechanism provides a documented way to share behaviour between adjacent cases. In this codebase, `LAUNCH` falls through to `CRUISE` because both phases require the same engine-active monitoring block — the `LAUNCH` case prints its own header and then deliberately falls into the `CRUISE` body. That is not a bug; it is the fall-through pattern used intentionally. The `/* FALLTHROUGH */` comment makes the intent explicit so that a future reader — and a compiler warning — can distinguish it from an accidental omission of `break`.
+### `ENGINE_CTRL` becomes a file-scope static
 
-The five-phase progression enforced by the `switch` forms a state machine: each state defines what operations are legal and what the valid next state is.
+The most significant structural change is that `ENGINE_CTRL` and `ENGINE_STATUS` move from `main.c`'s global scope into `engine.c` as `static uint32_t` variables. `static` at file scope means "visible only within this translation unit" — `main.c` cannot name or access the register directly. All register access goes through `engine.c` functions. The module boundary is enforced by the compiler, not by convention.
 
 ```mermaid
-stateDiagram-v2
-    [*] --> PREFLIGHT
-    PREFLIGHT --> LAUNCH : n — advance
-    LAUNCH --> CRUISE : n — advance
-    CRUISE --> APPROACH : n — advance
-    APPROACH --> DOCKED : n — advance
-    DOCKED --> [*] : q — quit
-    LAUNCH --> emergency_shutdown : CRITICAL_FAULT
-    CRUISE --> emergency_shutdown : CRITICAL_FAULT
-    APPROACH --> emergency_shutdown : CRITICAL_FAULT
-    emergency_shutdown --> [*]
+flowchart TD
+    main["main.c\n(orchestrator)"]
+    sensors["sensors.h / sensors.c"]
+    engine["engine.h / engine.c\nstatic ENGINE_CTRL\nstatic ENGINE_STATUS"]
+    navigation["navigation.h / navigation.c"]
+
+    main -->|"sensors_read_fuel()\nsensors_read_velocity()\nsensors_in_fault()\nsensors_apply_calibration()"| sensors
+    main -->|"engine_enable_thruster()\nengine_set_throttle()\nengine_fault_critical()\nengine_reset()"| engine
+    main -->|"nav_burn_rate()\nnav_hours_to_dest()\nnav_approach_safe()"| navigation
 ```
 
-### `goto` for the emergency shutdown path
+### Pass-by-value is the default
 
-`goto` is one of C's most contested constructs. In general application code it should be avoided because it makes control flow hard to follow. But jumping to a single labelled cleanup point before exit is a well-recognised exception in C systems programming — used throughout the Linux kernel and embedded firmware precisely because the jump is unconditional, unambiguous, and produces no intermediate state. The flight computer uses exactly this pattern: if `CRITICAL_FAULT` is detected anywhere during the command loop, `goto emergency_shutdown` jumps immediately past all remaining loop iterations to a block that clears the engine register and exits cleanly. The alternative — a flag variable checked at every branch — risks the flag being missed in a path added later.
+When you call any function in this codebase, C copies your argument into the function's parameter. `sensors_apply_calibration(fuel, 5)` gives the function its own copy of `fuel` to work with. The function can modify that copy freely — the caller's `fuel` variable is untouched after the call. This is not a limitation; it is the default behaviour everywhere in C, and it means functions cannot accidentally mutate caller state through their parameters. Phase 10 introduces the mechanism for when you genuinely need in-place modification: a pointer to the variable.
 
 ---
 
 ## ⏮️ What we built in the previous branch
 
-`phase-06_bitwise` added `ENGINE_CTRL` and `ENGINE_STATUS` as `uint32_t` register simulations. Bitmask operations — set (`|=`), clear (`&=`), toggle (`^=`), and test (`& ... != 0`) — were applied to individual bits using the `(uint32_t)1u << N` shift pattern. The throttle field in bits 4–7 was written with a shifted value and read back by right-shifting and masking with `THROTTLE_MASK`. Fault flags in `ENGINE_STATUS` were set and tested. The SOLUTION commit added thruster 1 enable and throttle-to-10 (Challenge 3), and the `BATTERY_LEVEL` field in `ENGINE_STATUS` bits 4–7 (Challenge 5).
+`phase-07_control-flow` gave Calypso a persistent runtime: a `while(1)` command loop with `break` to exit on quit and `goto` to jump to an emergency shutdown label on a critical fault. A `switch` on `current_phase` enforced valid mission-phase transitions with intentional fallthrough from `LAUNCH` into `CRUISE`. A `for` sensor scan used `continue` to skip faulted sensors; a `do-while` validated command input. The entire implementation — nearly 500 lines — lived in one `main.c` with one flat scope. The SOLUTION commit for this branch extends Phase 7 with the two additive challenges: a HIGH_WARN threshold check in the sensor scan (Challenge 3) and a thruster-state report in the emergency shutdown block (Challenge 5).
 
 ---
 
 ## 🎯 What we're doing in this branch
 
-- Wrap all runtime logic in a `while(1)` command loop that runs until the user quits or a critical fault fires
-- Use a `do-while` loop to validate command input — the prompt re-appears if the user enters an unrecognised character
-- Add a `switch` on `current_phase` with `break` for each normal case and one documented intentional fallthrough from `LAUNCH` into `CRUISE`
-- Write `if`/`else if`/`else` chains for sensor threshold checks inside the command loop
-- Use the ternary operator for compact status-string selection (fault flag and phase name display)
-- Add a `for` loop over a small sensor readings array; use `continue` to skip faulted sensors
-- Use `break` to exit the command loop on a quit command
-- Add a `goto emergency_shutdown` for the critical-fault path, jumping to a cleanup label before `return`
+- Extract sensor operations into `sensors.c` and `sensors.h` — `sensors_read_fuel()`, `sensors_read_velocity()`, `sensors_in_fault()`, `sensors_apply_calibration()`; the `sensor_float_t` typedef moves to `sensors.h`
+- Extract engine control into `engine.c` and `engine.h` — `engine_enable_thruster()`, `engine_disable_thruster()`, `engine_set_throttle()`, `engine_read_throttle()`, `engine_get_ctrl()`, `engine_get_status()`, `engine_set_fault()`, `engine_clear_status()`, `engine_fault_critical()`, `engine_reset()`; `ENGINE_CTRL` and `ENGINE_STATUS` become `static` file-scope variables invisible to `main.c`
+- Extract navigation calculations into `navigation.c` and `navigation.h` — `nav_burn_rate()`, `nav_hours_to_dest()`, `nav_approach_safe()`
+- Demonstrate pass-by-value explicitly: `sensors_apply_calibration()` modifies a local copy of the argument; the caller's variable is unchanged after the call
+- Update `CMakeLists.txt` to compile all four source files together into the single executable
 
 ---
 
 ## 🧑🏻‍🏫 Learning goals
 
 ### Understand
-- **Explain** fallthrough behaviour in `switch` — what happens when `break` is omitted, and how to distinguish an intentional fallthrough (with a `/* FALLTHROUGH */` comment) from a bug
-- **Explain** how `do-while` guarantees at least one execution of the loop body before the condition is tested, and why that guarantee matters for the command input validator
-- **Explain** how `continue` behaves differently in a `for` loop (jumps to the increment expression) versus a `while` loop (jumps to the condition check)
-- **Explain** the role of `while(1)` in embedded and systems C — why an intentional infinite loop is the correct structure for a program with no natural exit point
+- **Explain** pass-by-value — how C copies each argument into the corresponding parameter, and why a function modifying its parameter cannot affect the caller's variable
+- **Explain** how a header file exposes function declarations across translation units — what the compiler sees when `main.c` calls `sensors_read_fuel()` defined in `sensors.c`
+- **Distinguish** between block scope and file scope — how each determines where a name is visible and how long the variable lives
+- **Describe** global variables, their risk in larger codebases, and why this phase replaces them with `static` file-scope variables and explicit parameter passing
+- **Distinguish** between a function that returns a value, a function that performs an action (`void`-returning), and a function that modifies caller state via a pointer (Phase 10 preview)
+- **Explain** name shadowing — what happens when a local variable shares a name with a file-scope variable, and which declaration is visible at a given point
+- **Recognise** that C does not support function overloading — each function must have a unique name regardless of its parameter types
 
 ### Apply
-- **Write** `if`/`else if`/`else` chains for sensor threshold decisions in the status scan
-- **Use** the ternary operator to select a status string from a boolean condition without an `if` block
-- **Write** a `switch` on `MissionPhase` using `enum` constants as case labels, with `break` and one documented intentional fallthrough
-- **Implement** a `while(1)` command loop, a `do-while` input validator, and a `for` sensor scan with `continue`
-- **Use** `break` to exit the command loop and `goto` to jump to the emergency shutdown label
+- **Define** functions with appropriate return types and parameter lists in `sensors.c`, `engine.c`, and `navigation.c`
+- **Write** function prototypes in header files to expose declarations to `main.c`
+- **Call** functions from `main.c` that are defined in separate translation units, and explain how the linker connects the call site to the definition
 
 ### Analyze
-- **Examine** the `switch` on `MissionPhase` and explain why `enum` constants as case labels are more maintainable than integer literals
-- **Compare** `break` used inside a `switch` versus `break` used inside a loop — what does each one exit?
+- **Examine** `static uint32_t ENGINE_CTRL` in `engine.c` and explain what `static` prevents compared to the Phase 7 global declaration
+- **Compare** the Phase 7 monolith and the Phase 8 module split — identify two specific interactions between concerns that become impossible by design in Phase 8
 
 ---
 
@@ -171,126 +161,55 @@ stateDiagram-v2
 
 | Concept | Plain English |
 |---|---|
-| **`if` / `else if` / `else`** | Executes the first branch whose condition is true; subsequent branches are skipped. If no condition matches and an `else` is present, that block runs. |
-| **Ternary operator (`?:`)** | A compact single-expression alternative to `if`/`else` that produces a value: `condition ? value_if_true : value_if_false`. |
-| **`switch` / `case` / `break`** | Matches an integer expression against a list of constant labels. Execution starts at the matching label and continues — falling through — until a `break`, `return`, or the end of the `switch` body. |
-| **Intentional fallthrough** | When `break` is deliberately omitted so that one `case` block continues into the next. Must be documented with a `/* FALLTHROUGH */` comment so it can be distinguished from a forgotten `break`. |
-| **`while(1)` infinite loop** | A loop with a condition that is always true. The standard idiom for "run until an explicit exit is reached" in embedded and systems code. Exits via `break`, `return`, or `goto`. |
-| **`do-while`** | A loop that tests its condition after the body executes, guaranteeing at least one iteration regardless of the initial state. Used when the loop body must run once before any check is meaningful. |
-| **`for` loop** | Bundles initialisation, condition, and increment into one line. `continue` inside a `for` loop jumps to the increment expression before re-testing the condition. |
-| **`break`** | Exits the innermost enclosing `switch`, `for`, `while`, or `do-while`. Does not exit nested structures beyond the immediately enclosing one. |
-| **`continue`** | Skips the rest of the current loop iteration. In `for`, jumps to the increment; in `while` and `do-while`, jumps directly to the condition check. |
-| **`goto` and labels** | Unconditionally transfers execution to a named label in the same function. The legitimate use case in C is jumping to a single cleanup label before exit — the emergency-shutdown pattern. |
+| **Function prototype** | A declaration that tells the compiler a function's name, return type, and parameter types — without the body. Placed in a header so that any file including the header can call the function. |
+| **Translation unit** | One `.c` file and everything `#include`d into it. The compiler processes each translation unit independently and produces one object file. The linker combines the object files into the executable. |
+| **Pass-by-value** | When you call a function, C copies each argument into the corresponding parameter. The function works on its own copy; the caller's variable is unaffected. |
+| **File scope** | A variable declared outside any function is visible from its declaration to the end of that file. Adding `static` restricts visibility further — the variable cannot be accessed from any other translation unit. |
+| **Block scope** | A variable declared inside `{}` is only visible within those braces and is destroyed automatically when execution leaves them. |
+| **`void` function** | A function that performs an action and returns no value. `engine_set_throttle(10)` modifies the register and returns — there is nothing to assign the result to. |
+| **`static` at file scope** | Makes a variable or function private to its translation unit. `static uint32_t ENGINE_CTRL` in `engine.c` cannot be read or written by any other `.c` file. |
+| **Name shadowing** | When a local variable has the same name as an outer-scope variable, the local declaration hides the outer one within its block. The outer variable is unchanged; it simply cannot be named from inside the shadowing block. |
 
 ---
 
 ## 🔍 What to notice in the code
 
-**[`main.c:353`](main.c#L353) — `while(1)` command loop**
-The loop has no exit condition in its header — exit is entirely via `break` (line 376, quit command) or `goto` (lines 384 and 481, fault paths). This is the embedded-systems structure: the loop body is the program, and every exit path is named explicitly at the point where the decision is made.
-
-**[`main.c:365–372`](main.c#L365) — `do-while` input validator**
-The body reads a character and checks it before the condition is tested. The `'\0'` initialiser on `cmd` is a defensive floor against `scanf` returning EOF on a closed pipe — it is not a sentinel the loop depends on. In normal terminal operation, the do-while guarantee means `cmd` is always set by a real `scanf` read before it is used. Challenge 2 asks you to rewrite this as a plain `while` and identify what extra setup code is required.
-
-**[`main.c:355–360`](main.c#L355) and [`main.c:427–435`](main.c#L427) — ternary chains**
-Both phase-name ternary chains produce a string value without an `if` block. The pattern `(condition) ? "value" : (next condition) ? ...` chains as many cases as needed; the final `: "UNKNOWN"` is the catch-all arm. Ternary is the right tool when every branch produces a value and none has side effects.
-
-**[`main.c:397–421`](main.c#L397) — `switch` with intentional fallthrough**
-`case LAUNCH` prints the launch-specific line, then falls through into `case CRUISE` — there is no `break` between them. The `/* FALLTHROUGH */` comment documents the intent so a future reader (and `-Wimplicit-fallthrough`) can distinguish this from a forgotten `break`. When `current_phase == LAUNCH`, both the LAUNCH printf and the "Active burn" printf execute; when `current_phase == CRUISE`, only "Active burn" executes. Phase advancement happens after the switch (lines 425–436), not inside it, keeping the fallthrough body free of state mutations.
-
-**[`main.c:458–471`](main.c#L458) — `for` loop with `continue`**
-`continue` at line 461 skips the classification and printing for a faulted sensor. In a `for` loop, `continue` jumps to the increment expression (`i++`) before re-testing the condition — Challenge 4 asks what it jumps to in a `while` loop instead.
-
-**[`main.c:380–385`](main.c#L380) and [`main.c:481–488`](main.c#L481) — `goto emergency_shutdown`**
-Two paths use `goto`: the `'e'` command (explicit request) and the end-of-cycle fault check (implicit trigger). Both jump to the same `emergency_shutdown:` label at line 488, which clears `ENGINE_CTRL` to zero and exits. The `'q'` → `break` path does not hit the label — it falls through to the normal-shutdown `printf` and `return 0` instead, giving two distinct exit sequences from one function.
-
----
-
-## 🔗 What this phase revealed
-
-By the end of this phase, `main.c` handles the boot sequence, sensor reads, navigation calculations, engine register operations, the command loop, the mission state machine, the sensor scan loop, and the emergency shutdown path — all in one file, all in one scope. Every threshold value, every fault condition, every valid phase transition is a raw value written inline. There is no boundary between the sensor layer and the engine layer; nothing prevents one code path from silently overwriting `ENGINE_CTRL` in a way that conflicts with another.
-
-> **LEARNING MOMENT:** The friction you feel reading this file is the problem Phase 8 solves. Wrapping related operations in named functions with explicit parameters would give each operation an identity, hide the implementation detail, and make accidental interference between code paths much harder. The monolithic file is not a mistake — it is a deliberate accumulation so that the value of modularisation is visible from the diff.
+[Placeholder — completed after code is written]
 
 ---
 
 ## ▶️ Running this branch
 
-**Prerequisites:** GCC or Clang (C99+) and CMake 3.10+, or just GCC/Clang on its own.
-
-**With CMake (recommended):**
-```bash
-cmake -B build
-cmake --build build
-.\build\Debug\calypso.exe   # Windows (MSVC)
-.\build\calypso.exe         # Windows (MinGW)
-./build/calypso             # Linux / macOS
-```
-
-**Direct compilation (no CMake):**
-```bash
-gcc -std=c99 main.c -o calypso
-./calypso
-```
-
-The program prints the boot banner, the full sensor suite, the navigation calculations, and the engine control section from previous phases, then enters the command loop. Commands:
-
-| Command | Action |
-|---|---|
-| `n` | Advance the mission phase (`PREFLIGHT → LAUNCH → CRUISE → APPROACH → DOCKED`) |
-| `s` | Run the periodic sensor scan (three sensors, one faulted — watch `continue` skip it) |
-| `e` | Trigger the emergency shutdown via `goto` |
-| `q` | Normal quit via `break` |
-
-Any unrecognised character re-prompts (the `do-while` validator).
-
-**Expected output excerpt — LAUNCH → CRUISE phase advance (showing intentional fallthrough):**
-```
-[LAUNCH] Command (n/s/e/q): n
-  Launch: ignition sequence active
-  Active burn: throttle=10 | fuel=950 kg | STATUS=0x00000000
-  >> Phase advanced to CRUISE
-```
-
-**Expected output — emergency shutdown:**
-```
-[LAUNCH] Command (n/s/e/q): e
-EMERGENCY COMMAND RECEIVED -- initiating shutdown
-
---- EMERGENCY SHUTDOWN ---
-ENGINE_CTRL cleared    : 0x00000000
-ENGINE_STATUS          : 0x00000005
-Calypso offline.
-```
+[Placeholder — completed after code is written]
 
 ---
 
 ## ✏️ Challenges for students
 
 **Challenge 1 — Analytical**
-The `switch` on `MissionPhase` has an intentional fallthrough from `LAUNCH` into `CRUISE`. List, in order, every `printf` call that executes when `current_phase == LAUNCH`. Then explain what a compiler warning about implicit fallthrough (`-Wimplicit-fallthrough`) is telling you — and why this particular fallthrough is documented as intentional rather than flagged as a bug.
+`sensors_apply_calibration()` increments its `reading` parameter inside the function body, but the caller's variable is unchanged after the call. Confirm this by reading the function definition in `sensors.c` and the calling code in `main.c`. Then explain: what exactly does C copy when you call the function? Why is there no path back to the original variable?
 
 **Challenge 2 — Analytical**
-The command input uses a `do-while` loop. Rewrite it as a plain `while` loop that behaves identically. What extra line do you need to add before the loop, and why does the `do-while` form eliminate that line?
+`ENGINE_CTRL` is declared `static uint32_t ENGINE_CTRL` at file scope in `engine.c`. What does `static` do here — which parts of the codebase can see and modify this variable? If you removed `static` and instead declared `extern uint32_t ENGINE_CTRL` in `engine.h`, what would change? Name two specific bugs from Phase 7 that the `static` declaration makes impossible in Phase 8.
 
-**Challenge 3 — Additive**
-The sensor scan loop uses `continue` to skip faulted sensors. Add a second threshold check inside the loop: if a sensor reading exceeds a `HIGH_WARN` value (use `2000.0f`), set `TEMP_WARNING_BIT` in `ENGINE_STATUS` using the `|=` bitmask pattern from Phase 6, then `continue` to skip the normal output line for that sensor and print a warning message instead. Print `ENGINE_STATUS` in hex after the loop to confirm the bit was set.
+**Challenge 3 — Analytical**
+C does not support function overloading. Look at `sensors_read_fuel()` and `sensors_read_velocity()`. If you wanted a third sensor function that read pressure in PSI rather than kPa, how would you name it to follow the convention used in this codebase? How does the C standard library solve the same naming problem — for example, across the `printf` family?
 
-**Challenge 4 — Analytical**
-In the sensor scan `for` loop, `continue` jumps to `i++` before re-checking `i < SENSOR_COUNT`. If you rewrote the same loop as a `while` loop, where would `continue` jump instead? Rewrite the loop as a `while` — mark clearly in your version where `continue` lands — and explain what you must add to prevent the loop from hanging on the iteration where `continue` fires.
+**Challenge 4 — Additive**
+Add a `sensors_read_pressure(void)` function to `sensors.c` and `sensors.h` that returns the cabin pressure value as a `sensor_float_t`. Write its prototype in `sensors.h`. Call it from `main.c` in the boot banner to display cabin pressure, replacing the inline literal `101.325f`. The function should return `101.325f`.
 
 **Challenge 5 — Additive (stretch)**
-The `emergency_shutdown` block currently clears `ENGINE_CTRL` to zero and prints the register value, but gives no indication of which thrusters were active at the moment of shutdown. Extend the block: before clearing the register, add a `for` loop over bit positions 0–3 and use the bitmask test pattern from Phase 6 to check which thruster bits are set. For each active thruster, print its number. The four bit-position constants `THRUSTER_0_BIT` through `THRUSTER_3_BIT` are already declared.
+`navigation.c` already has `nav_hours_to_dest()` for time calculations. Add a `nav_fuel_efficiency(uint32_t distance_km, uint16_t fuel_kg)` function to `navigation.c` and `navigation.h` that returns fuel efficiency as a `sensor_float_t` (km per kg) using floating-point division. Replace the inline efficiency calculation in `main.c` with a call to this new function, and verify the output matches the previous result.
 
 ---
 
 ## 💭 Thought pieces for the next branch
 
-1. `main.c` is now several hundred lines — sensor reads, register operations, state transitions, and command handling all share one file and one scope. What are the risks of letting a single source file keep growing? When does a monolithic `main.c` become a maintenance liability?
-2. Multiple places in `main.c` write to `ENGINE_CTRL` directly. If two code paths make conflicting writes — say, the normal phase transition and a fault-recovery path — which one wins? Is there a way in C to restrict which code is allowed to write to the register?
-3. The critical fault temperature threshold appears in two separate `switch` cases. If you need to change it, you update two places — and risk them falling out of sync. How does C let you define a constant once and use it everywhere it is needed? (This question is answered in Phase 15.)
+1. `sensors_read_fuel()` returns one current value — a snapshot. To detect an anomaly we need the last 10 readings. A single return value cannot give us that. What data structure holds a sequence of values in C?
+2. We pass sensor values into functions by value. What if a function needed to update a sensor reading in-place — for calibration? A copy will not work. What would we need to pass instead?
+3. How much memory does one `uint16_t` sensor reading take? How much for 20 of them? How does C pass that sequence to a function without copying all 20 values?
 
 ---
 
-*Previous branch: [`phase-06_bitwise`]*
-*Next branch: [`phase-08_functions`]*
+*Previous branch: [`phase-07_control-flow`]*
+*Next branch: [`phase-09_arrays`]*
