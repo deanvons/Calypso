@@ -174,13 +174,83 @@ When you call any function in this codebase, C copies your argument into the fun
 
 ## 🔍 What to notice in the code
 
-[Placeholder — completed after code is written]
+**[`sensors.h`](sensors.h)**
+The `sensor_float_t` typedef moves here from `main.c`. Every file that needs the type includes `sensors.h` — one definition, one place. The four function prototypes are declarations only: they tell the compiler the signature without revealing how the function works. `sensors_apply_calibration()` carries a multi-line comment explaining the pass-by-value contract; that comment is the learning moment for callers.
+
+**[`sensors.c`](sensors.c)**
+The `// NOTE:` comment on `sensors_apply_calibration()` (line 23) marks exactly where the copy semantics are visible — `reading += offset` increments the local parameter, not the caller's variable. The function then returns the modified copy. A reader unfamiliar with pass-by-value should stop here.
+
+**[`engine.c`](engine.c)**
+`static uint32_t ENGINE_CTRL = 0u` and `static uint32_t ENGINE_STATUS = 0u` (lines 22–23) are the key change from Phase 7. These are the same variables that lived as plain globals in `main.c`; `static` at file scope restricts their visibility to the functions in this file. `main.c` cannot name them — the compiler enforces the boundary. The bit-position constants (`THROTTLE_SHIFT`, `CRITICAL_FAULT_BIT`, etc.) are also `static` and private. Callers never need to know the register layout; they call `engine_set_critical_fault()` and let the module do the bit work.
+
+**[`engine.h`](engine.h)**
+Compare `engine.h` to `engine.c`: the header has twelve function prototypes and no data. The registers, the bit positions, the shift constants — none of it is visible here. This is the module's public contract: what it offers, nothing more.
+
+**[`navigation.c`](navigation.c)**
+Each function is one expression: a calculation, a comparison, a return. The `// NOTE:` on `nav_hours_to_dest()` (line 10) points back to the Phase 5 parenthesisation explanation — the logic didn't change, it moved into a named function. Phase 8 adds no new arithmetic; it gives the arithmetic a name.
+
+**[`main.c:48–53`](main.c#L48)**
+The pass-by-value demonstration. `fuel` is printed before and after the call to `sensors_apply_calibration(fuel, 5)` — the value is identical. The returned copy (`fuel_calibrated`) has the offset applied. These two lines prove that the function received a copy, not the original.
+
+**[`main.c:57–67`](main.c#L57)**
+Navigation section: three function calls replace the three inline calculations from Phase 5. `nav_burn_rate()`, `nav_hours_to_dest()`, and `nav_approach_safe()` take the same arguments and produce the same values — the refactoring added a name and a boundary, not a new computation.
+
+**[`main.c:70–92`](main.c#L70)**
+Engine control section: every register write is now a named function call. Compare `engine_enable_thruster(0)` here to `ENGINE_CTRL |= ((uint32_t)1u << THRUSTER_0_BIT)` in Phase 7 — the intent is the same, the mechanism is hidden. `main.c` never names a bit position.
 
 ---
 
 ## ▶️ Running this branch
 
-[Placeholder — completed after code is written]
+**Prerequisites:** GCC or Clang (C99+) and CMake 3.10+, or just GCC/Clang on its own.
+
+**With CMake (recommended):**
+```bash
+cmake -B build
+cmake --build build
+.\build\Debug\calypso.exe   # Windows (MSVC)
+.\build\calypso.exe         # Windows (MinGW)
+./build/calypso             # Linux / macOS
+```
+
+**Direct compilation (no CMake):**
+```bash
+gcc -std=c99 main.c sensors.c engine.c navigation.c -o calypso
+./calypso
+```
+
+The program prints the boot banner, sensor reads (with the pass-by-value demonstration), navigation results, and an engine control register demo, then enters the command loop. Commands:
+
+| Command | Action |
+|---|---|
+| `n` | Advance the mission phase (`PREFLIGHT → LAUNCH → CRUISE → APPROACH → DOCKED`) |
+| `s` | Run the periodic sensor scan — sensor 1 (velocity) is faulted; sensor 2 triggers HIGH_WARN and calls `engine_set_temp_warning()` |
+| `e` | Trigger the emergency shutdown via `goto` |
+| `q` | Normal quit via `break` |
+
+**Expected output — pass-by-value demonstration:**
+```
+Fuel (original)      : 950 kg  (unchanged after sensors_apply_calibration)
+Fuel (calibrated)    : 955 kg  (copy returned by the function)
+```
+
+**Expected output — LAUNCH → CRUISE phase advance (intentional fallthrough):**
+```
+[LAUNCH] Command (n/s/e/q): n
+  Launch: ignition sequence active
+  Active burn: throttle=10 | fuel=950 kg | STATUS=0x00000000
+  >> Phase advanced to CRUISE
+```
+
+**Expected output — sensor scan (HIGH_WARN path):**
+```
+[PREFLIGHT] Command (n/s/e/q): s
+--- Periodic Sensor Scan ---
+  Sensor 0:  101.325  [NOMINAL]
+  Sensor 1: FAULTED -- skipping
+  Sensor 2: WARNING -- reading 3200.000 exceeds HIGH_WARN threshold
+ENGINE_STATUS          : 0x00000002
+```
 
 ---
 
