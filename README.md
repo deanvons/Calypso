@@ -1,14 +1,14 @@
-# Phase README — Sensor History Buffer
+# Phase README — Low-level sensor access
 
-> **Phase 09 — Arrays** | Calypso · Core C
+> **Phase 10 — Pointers** | Calypso · Core C
 
-Fixed-size circular history buffers for two sensor channels — filling each slot with a `for` loop, computing averages, and detecting drift across a sequence of readings.
+Pointer variables, in-place calibration, and pointer arithmetic over the sensor history buffer — introducing the address-of operator, dereference, `const T*` vs `T* const`, and a pointer-to-pointer for sensor channel reconfiguration.
 
-Every sensor in the current system returns a single snapshot — one `uint16_t` reading per call. That is sufficient for a dashboard display, but it tells you nothing about whether the value has been rising, falling, or spiking over the last several seconds. Anomaly detection — the kind that catches a slow fuel leak before it becomes a crisis — requires a sequence. The fix is to store readings over time, which means allocating a block of memory large enough to hold N values of the same type.
+`sensors_apply_calibration()` in the previous phase took a fuel reading by value, computed a corrected copy, and handed it back. That works for one variable — but it cannot modify the caller's storage directly. If you want to apply a correction to every slot in the fuel history buffer, passing by value and returning copies is the wrong tool. To modify a caller's variable from inside a function, you need its address.
 
-An array is the simplest possible answer: a fixed-size, contiguous block of same-type elements, each addressable by a zero-based index. `uint16_t fuel_history[SENSOR_HISTORY_LEN]` reserves ten consecutive `uint16_t` slots in memory. A `for` loop fills them. `sizeof(fuel_history) / sizeof(fuel_history[0])` derives the element count without repeating the number. And when the buffer is passed to `compute_average()`, C does not copy all twenty bytes — it converts the array name to a pointer to its first element. That conversion, and what it means for `sizeof` inside the function, is the hidden lesson of this phase.
+A pointer is a variable that holds a memory address. `uint16_t *reading` is a variable that holds the address of a `uint16_t`. The address-of operator `&` produces that address; the dereference operator `*` follows it back to the value. `sensors_calibrate(&fuel, 5)` passes the address of `fuel`, and `*reading += 5` writes through that address directly into the caller's variable. The original changes, not a copy.
 
-> **A note on scope.** Arrays in C decay to a pointer to their first element when passed to a function — this is how `compute_average()` can read the buffer without copying it. Pointers are the subject of Phase 10 and are introduced here only to explain the decay. Writing back through a pointer, pointer arithmetic as a standalone tool, and multi-level pointers are Phase 10 material.
+> **A note on scope.** Dynamic memory — `malloc`, `free`, and heap-allocated arrays — is Phase 13 material. This phase works entirely with pointers to stack and file-scope variables: addresses of things that already exist. Null and uninitialised pointer pitfalls are shown as DELIBERATE-marked examples, not as runnable code.
 
 ---
 
@@ -22,6 +22,7 @@ An array is the simplest possible answer: a fixed-size, contiguous block of same
 - [Learning goals](#-learning-goals)
 - [Key concepts](#-key-concepts)
 - [What to notice in the code](#-what-to-notice-in-the-code)
+- [What this phase revealed](#-what-this-phase-revealed)
 - [Running this branch](#-running-this-branch)
 - [Challenges for students](#-challenges-for-students)
 - [Thought pieces for the next branch](#-thought-pieces-for-the-next-branch)
@@ -41,8 +42,8 @@ An array is the simplest possible answer: a fixed-size, contiguous block of same
 | `phase-06_bitwise` | Bitmasks · `ENGINE_CTRL` register · `1u << n` shift pattern | — |
 | `phase-07_control-flow` | `while(1)` command loop · `switch` state machine · `goto` emergency shutdown | — |
 | `phase-08_functions` | `sensors.c` / `engine.c` / `navigation.c` split · prototypes · pass-by-value | Modular |
-| `📌 phase-09_arrays` | **Sensor history buffers · `sizeof` element count · `array[i]` ≡ `*(array + i)`** | — |
-| `phase-10_pointers` | `&` / `*` · pointer arithmetic · `const T*` vs `T* const` · `**` | — |
+| `phase-09_arrays` | Sensor history buffers · `sizeof` element count · `array[i]` ≡ `*(array + i)` | — |
+| `📌 phase-10_pointers` | **`&` / `*` · in-place calibration · pointer arithmetic · `const T*` vs `T* const` · `**`** | — |
 | `phase-11_strings` | `char` arrays · `strncpy` / `strcmp` / `strlen` · null terminator | — |
 | `phase-12_structs` | `crew_member_t` · `spacecraft_t` · dot / arrow notation · nested structs | — |
 | `phase-13_dynamic-memory` | `malloc` / `realloc` / `free` · dynamic crew roster · `NULL` checks | — |
@@ -65,97 +66,105 @@ git log --oneline          # find the SOLUTION commit hash
 git show <hash>            # inspect the solution in isolation
 ```
 
-### Challenge 1 — What C copies in pass-by-value
+### Challenge 1 — Why `sizeof(buf)` gives pointer size inside `detect_drift()`
 
-When you call `sensors_apply_calibration(fuel, 5)`, C evaluates `fuel` at the call site and copies that integer value into the function's `reading` parameter. `reading` is a new, separate variable on the stack — it holds the same number, but it is not the same storage location. There is no path back to the caller's `fuel` from inside the function because the function was never given the address of `fuel`, only its value. The returned result is a second copy, computed from the modified local and handed back through the return register.
+When `fuel_history` is passed to `detect_drift()`, the array name decays to a pointer to its first element at the call site. Inside the function, `buf` is a `uint16_t *` — a pointer variable that holds an 8-byte address on a 64-bit platform. `sizeof(buf)` measures that pointer variable, not the array it addresses. The array's total size is lost the moment it decays; that is exactly why `len` must be passed as a separate argument. The compiler has no way to recover the original array size from a pointer alone.
 
-### Challenge 2 — `static` file scope and what it prevents
+### Challenge 2 — What `buf[i]` ≡ `*(buf + i)` reveals about pointer arithmetic
 
-`static uint32_t ENGINE_CTRL` at file scope in `engine.c` limits the variable's visibility to the translation unit it is declared in. No other `.c` file can name it — there is no declaration visible outside `engine.c`, so any attempt to write `ENGINE_CTRL = ...` in `main.c` is a compile error. If you replaced `static` with no qualifier and added `extern uint32_t ENGINE_CTRL` in `engine.h`, every file that includes `engine.h` could read and write the register directly. Two specific bugs that `static` makes impossible: the navigation section accidentally clearing `ENGINE_CTRL` with a stray assignment, and the state machine in `main.c` writing a bit position directly instead of calling the function that validates the throttle range.
+Pointer addition does not operate in bytes — it operates in units of the pointed-to type's size. When `buf` is `uint16_t *` and you write `buf + i`, the compiler multiplies `i` by `sizeof(uint16_t)` (2 bytes) to produce the byte offset from the base address. `buf[i]` is exactly `*(buf + i)` by definition — the subscript operator is syntactic sugar for pointer arithmetic plus dereference. The step size is implicit in the type and determined by the compiler at compile time.
 
-### Challenge 3 — Naming convention and the `printf` family
+### Challenge 3 — Out-of-bounds write to index `SENSOR_HISTORY_LEN`
 
-Following the module prefix convention in this codebase, the function would be named `sensors_read_pressure()`. The C standard library solves the same naming problem differently: the `printf` family uses suffixes that encode the output target — `printf` writes to `stdout`, `fprintf` to a `FILE *`, `sprintf` to a `char` buffer, `snprintf` adds a length bound. Each is a distinct function with a distinct name; C has no overloading to let them share one. The convention in both cases is the same: the name encodes what the function operates on or where its output goes.
+C does not check. Writing to `fuel_history[SENSOR_HISTORY_LEN]` addresses the memory immediately past the last valid element — whatever happens to be there. On the stack it might overwrite a local variable, the saved frame pointer, or a return address. At file scope it might corrupt an adjacent variable. The program continues without an error message; the consequence is a corrupted value somewhere, a crash at a later unrelated point, or a silent security vulnerability. Bounds discipline is entirely your responsibility.
 
-### Thought piece 1 — A data structure that holds a sequence of values
+### Thought piece 1 — Can `compute_average()` write back through the pointer it receives?
 
-An array. `uint16_t fuel_history[SENSOR_HISTORY_LEN]` reserves ten consecutive `uint16_t` slots in memory — each addressable by index from 0 to `SENSOR_HISTORY_LEN - 1`. That is exactly the structure `compute_average()` needs: a fixed block of readings, all of the same type, all adjacent, all addressable. This phase adds that structure to Calypso's sensor module.
+Yes — `buf` is `uint16_t *`, not `const uint16_t *`, so the function could write through it with `buf[i] = 0`. Whether it *should* is a design question: the name `compute_average` implies a read, not a write. Adding undeclared write behaviour to a reader makes the interface harder to reason about. The right answer is `const uint16_t *buf` in the parameter: it tells both the caller and the compiler that this function will only read through the pointer. Phase 10 adds that qualifier.
 
-### Thought piece 2 — Passing an address instead of a copy
+### Thought piece 2 — What `array[i]` ≡ `*(array + i)` tells us about memory layout
 
-A pointer to the variable. If a calibration function needs to write a corrected value back to the caller's variable, it needs the address of that variable — not a copy of its current content. You would pass the address with `&reading` at the call site; the function receives a `uint16_t *` parameter and writes through it with the dereference operator `*`. Phase 10 builds this mechanism in full.
+Array subscripting is pointer arithmetic in disguise. `i` is scaled by the element size — `fuel_history + 3` does not add 3 bytes; it adds 3 × `sizeof(uint16_t)` = 6 bytes. The array name in an expression context is a pointer to element zero; every subsequent element is exactly `i × sizeof(element)` bytes further along. Elements are guaranteed contiguous in memory; that is what makes pointer arithmetic over a buffer predictable and what lets you traverse it with `ptr++` instead of `buf[i]`.
 
-### Thought piece 3 — Memory for a sequence of `uint16_t` values
+### Thought piece 3 — Fixing the calibration function that operates on a copy
 
-One `uint16_t` occupies 2 bytes. Twenty of them occupy 40 bytes — they sit contiguously in memory with no gaps between elements of the same type. When you pass an array to a function, C does not copy all 40 bytes; it passes a pointer to the first element. The function receives 8 bytes on a 64-bit platform — the address of the start of the buffer. It can reach any element from there using index arithmetic, but it does not receive the data itself.
+Pass a pointer to the variable instead of the variable itself. `sensors_calibrate(uint16_t *reading, uint16_t offset)` receives the address of the caller's variable; `*reading += offset` writes through that address directly into the caller's storage. At the call site: `sensors_calibrate(&fuel, 5)`. After the call, `fuel` holds the corrected value — no return value needed. Phase 10 builds exactly this.
 
 ---
 
 ## 💡 Why we made this decision
 
-### A snapshot is not a trend
+### From "return a copy" to "modify in place"
 
-`sensors_read_fuel()` returns the current reading. That is sufficient for a dashboard display, but it tells you nothing about whether the value has been rising, falling, or spiking intermittently over the last ten seconds. Catching a slow fuel leak before it becomes a crisis requires a sequence. The fix is to store readings over time in a block of memory large enough to hold N values of the same type and addressable by index.
+`sensors_apply_calibration(uint16_t reading, uint16_t offset)` computed a corrected value from a copy and returned it. The caller had to capture the return value and decide what to do with it. If you wanted to calibrate all ten slots of the fuel history buffer — applying the same correction to each — you would need to loop, call the function ten times, and reassign each result. The function cannot reach into the caller's array because it was never given the locations, only the values.
 
-An array is the simplest possible answer. The alternative — N separate named variables (`reading_0`, `reading_1`, ... `reading_9`) — does not scale and cannot be iterated. An array is what a `for` loop was built for.
+The natural fix is to pass the address. `sensors_calibrate(uint16_t *reading, uint16_t offset)` receives a pointer — the memory address of the caller's variable. `*reading += offset` follows that address and writes the corrected value directly into the caller's storage. The function needs no return value because the side effect is the point.
 
-### `SENSOR_HISTORY_LEN` as the single source of truth
+This is the fundamental distinction between pass-by-value and pass-by-pointer in C. Neither is universally better: pass-by-value keeps the caller's variable safe (the callee cannot accidentally corrupt it), while pass-by-pointer is necessary when a function must write back to the caller.
 
-The buffer length appears in three places: the declaration, the loop that fills it, and the element count passed to analysis functions. All three use `SENSOR_HISTORY_LEN`. If you change one number, every use updates. If the length were a magic literal — `[10]` here, `10` there, `10` again in the loop bound — a change in one place would silently leave the others stale, and the resulting out-of-bounds access would be undefined behaviour with no compile-time warning. `SENSOR_HISTORY_LEN` is a preprocessor `#define` here; Phase 15 covers `#define` properly and explains why this form is preferred over `const int` for array sizes in C.
+### `const` as intent expressed in the type
 
-### Array decay to pointer
+Two functions in this phase take pointer parameters with different intentions:
 
-When you write `compute_average(fuel_history, SENSOR_HISTORY_LEN)`, you are not copying the entire buffer. C converts `fuel_history` — the array name — to a pointer to its first element and passes that address. The function signature receives `uint16_t *buf` — a memory address, not a copy. This is not a special rule; it is the fundamental connection between arrays and pointers in C: `array[i]` is defined as `*(array + i)`, and the array name in an expression context is a pointer to element zero. One consequence is that `sizeof(buf)` inside `compute_average()` gives the pointer size, not the array size — which is why the buffer length must be passed as a separate parameter. Phase 10 explores this connection from the pointer side.
+- `compute_average(const uint16_t *buf, int len)` — reads through `buf` but must not write. `const` encodes that promise; the compiler will reject any attempt to write through `buf` inside the function.
+- `sensors_calibrate(uint16_t *reading, uint16_t offset)` — must write through `reading`. No `const`.
+
+`uint32_t * const pENGINE_CTRL` in `engine.c` is a different kind of `const`: the pointer itself is constant. It always addresses `ENGINE_CTRL`; you cannot reseat it to point elsewhere. The value at that address can still be changed. On real embedded hardware, a control register lives at a fixed physical address for the life of the program — a `T * const` pointer models that directly.
+
+The two qualifiers answer two different questions:
+- `const T *` — is the data the pointer points to read-only?
+- `T * const` — is the pointer itself fixed (cannot be reseated)?
 
 ```mermaid
-flowchart TD
-    main["main.c\n(records readings on each scan)"]
-    record["sensors_record_fuel(reading)\nsensors_record_velocity(reading)\n— fills circular buffer by index —"]
-    buffers["static fuel_history[SENSOR_HISTORY_LEN]\nstatic velocity_history[SENSOR_HISTORY_LEN]\n(file-scope, invisible outside sensors.c)"]
-    helpers["static compute_average(buf, len)\nstatic detect_drift(buf, len, threshold)\n— receive pointer to first element —"]
-    query["sensors_compute_fuel_avg()\nsensors_detect_fuel_drift()\n— public: pass buffer + length to helpers —"]
-
-    main -->|calls| record
-    record -->|writes index slot| buffers
-    main -->|calls| query
-    query -->|passes array + length| helpers
-    helpers -->|reads via buf[i]| buffers
+flowchart LR
+    subgraph read_only["const uint16_t *buf"]
+        direction LR
+        A["pointer\n(can be reseated)"] -->|reads only| B["data\n(read-only via this pointer)"]
+    end
+    subgraph fixed_ptr["uint32_t * const pENGINE_CTRL"]
+        direction LR
+        C["pointer\n(fixed — always addresses ENGINE_CTRL)"] -->|can read and write| D["data\n(mutable)"]
+    end
 ```
+
+### `**` for pointer indirection
+
+`sensors_configure_channel(uint16_t **channel, uint16_t *new_buf)` takes a pointer-to-pointer. The caller passes `&primary_channel` — the address of a `uint16_t *` variable. Inside the function, `*channel = new_buf` writes a new address into the caller's pointer variable, redirecting it to a different history buffer. Without `**`, the function would only receive a copy of the pointer value — the same limitation that forced us from pass-by-value to pass-by-pointer for scalar values now applies one level up.
 
 ---
 
 ## ⏮️ What we built in the previous branch
 
-`phase-08_functions` split the 490-line `main.c` monolith into four translation units: `sensors.c/sensors.h`, `engine.c/engine.h`, `navigation.c/navigation.h`, and a slimmed-down `main.c` orchestrator. `ENGINE_CTRL` and `ENGINE_STATUS` became `static` file-scope variables in `engine.c`, invisible to all other modules. Pass-by-value was demonstrated explicitly: `sensors_apply_calibration()` modified a local copy of its argument and returned the result; the caller's variable was unchanged. The SOLUTION commit at the top of this branch adds `sensors_read_pressure()` (Challenge 4) and `nav_fuel_efficiency()` (Challenge 5) to their respective modules.
+`phase-09_arrays` added fixed-size circular history buffers for fuel and velocity: `static uint16_t fuel_history[SENSOR_HISTORY_LEN]` and `static uint16_t velocity_history[SENSOR_HISTORY_LEN]`, both file-scoped in `sensors.c`. A `for` loop fills each buffer slot by slot; `sensors_compute_fuel_avg()` and `sensors_detect_fuel_drift()` pass the array — which decays to a pointer at the call site — to static helper functions. The SOLUTION commit at the top of this branch adds a `pressure_history` buffer (Challenge 4) and changes `sensors_detect_fuel_drift()` to return the index of the first drifting reading rather than a boolean (Challenge 5).
 
 ---
 
 ## 🎯 What we're doing in this branch
 
-- Declare `static uint16_t fuel_history[SENSOR_HISTORY_LEN]` and `static uint16_t velocity_history[SENSOR_HISTORY_LEN]` in `sensors.c` as file-scope circular buffers; use `SENSOR_HISTORY_LEN` as the single size constant throughout
-- Add `sensors_record_fuel()` and `sensors_record_velocity()` to fill each buffer slot by slot using a wrapping index
-- Use `sizeof(fuel_history) / sizeof(fuel_history[0])` in the record functions to show how element count is derived from byte size
-- Implement static helpers `compute_average(uint16_t *buf, int len)` and `detect_drift(uint16_t *buf, int len, uint16_t threshold)` — the array decays to a pointer at each call site; the helpers demonstrate that `buf[i]` and `*(buf + i)` are identical
-- Expose `sensors_compute_fuel_avg()` and `sensors_detect_fuel_drift()` as the public API — these call the helpers, passing the file-scope buffer and its length
-- Call the record and query functions from `main.c` in the sensor-scan command so each `s` command adds one reading and prints the running state
+- Add `sensors_calibrate(uint16_t *reading, uint16_t offset)` in `sensors.c` — takes the address of a sensor reading and applies an offset in place using the dereference operator; demonstrate alongside `sensors_apply_calibration()` in `main.c` to show the pass-by-value vs pass-by-pointer contrast
+- Update `compute_average` to use `const uint16_t *buf` — the `const` qualifier prevents writes through the parameter; update `detect_drift` to iterate using a pointer variable (`ptr++`) rather than index arithmetic
+- Add `static uint32_t * const pENGINE_CTRL = &ENGINE_CTRL` in `engine.c` — a fixed pointer to the simulated control register; use it in `engine_enable_thruster()` and `engine_disable_thruster()` to demonstrate `T * const`
+- Add `sensors_configure_channel(uint16_t **channel, uint16_t *new_buf)` in `sensors.c` — takes a pointer-to-pointer and redirects the caller's pointer to a different history buffer; demonstrate from `main.c` with `&primary_channel`
+- Add DELIBERATE-commented examples in `main.c` showing null, uninitialised, and dangling pointer pitfalls — not executed, but visible at the point where the concepts are introduced
 
 ---
 
 ## 🧑🏻‍🏫 Learning goals
 
 ### Understand
-- **Explain** what an array is — how elements of the same type are stored contiguously in memory at predictable, fixed-size offsets from the first element
-- **Explain** why array indexing starts at 0 and why accessing an index outside the declared bounds is undefined behaviour
-- **Explain** why C performs no bounds checking and why this makes out-of-bounds access dangerous — no runtime error, no warning, any result is possible
+- **Explain** a pointer as a variable that holds a memory address — the difference between the pointer variable (which stores an address), the address it holds (a location in memory), and the value at that address (the data itself)
+- **Explain** the difference between a null pointer (`NULL` — a known-invalid address, detectable before dereference) and an uninitialised pointer (holds a garbage address, not detectable) — and why uninitialised is more dangerous
+- **Explain** why an array name decays to a pointer to its first element when used in an expression or passed to a function
+- **Explain** the difference between `const uint16_t *` (the pointed-to data is read-only; the pointer can be reseated) and `uint16_t * const` (the pointer is fixed; the data it points to is mutable)
+- **Identify** the three most dangerous pointer errors — dangling pointers, use-after-free, and uninitialised pointer dereference — and explain why each is difficult to detect at runtime
 
 ### Apply
-- **Declare** fixed-size arrays in `sensors.c` using the `SENSOR_HISTORY_LEN` constant and access elements using zero-based index notation
-- **Use** `sizeof(array) / sizeof(array[0])` to derive element count from the array's byte size
-- **Pass** the sensor history buffer to `compute_average()` and `detect_drift()` and explain what the function actually receives
+- **Declare** pointer variables, use `&` to take an address, and `*` to dereference it — in `sensors_calibrate()` and its call site in `main.c`
+- **Apply** pointer arithmetic over the sensor history buffer in `detect_drift()` using a pointer variable that advances with `ptr++`
+- **Use** a `uint16_t **` parameter in `sensors_configure_channel()` to redirect a caller's pointer to a different history buffer
 
 ### Analyze
-- **Demonstrate** that `buf[i]` and `*(buf + i)` produce the same value — and explain what that equivalence reveals about how array indexing works in memory
-- **Examine** what happens to `sizeof` information when an array is passed to a function — and why `sizeof(buf)` inside the function gives the pointer size, not the array size
+- **Differentiate** `const uint16_t *buf` from `uint16_t * const ptr` — identify which constrains the pointer and which constrains the data; trace through which operations are permitted in each case
 
 ---
 
@@ -163,112 +172,65 @@ flowchart TD
 
 | Concept | Plain English |
 |---|---|
-| **Array** | A fixed-size block of same-type elements stored contiguously in memory, each addressable by a zero-based integer index. |
-| **Zero-based indexing** | The first element is at index 0, the last is at index `length - 1`. Indexing from 0 matches the way pointer arithmetic works: `array[i]` is `*(array + i)`. |
-| **Out-of-bounds access** | Reading or writing past the last valid index. C does not check at runtime; the program reads or writes whatever is at that memory address — silent data corruption, a crash, or a security vulnerability with no useful error message. |
-| **`sizeof` on an array** | Returns the total byte size of the array — element size multiplied by element count. Dividing by `sizeof(array[0])` recovers the count without repeating the magic number. |
-| **Array decay** | When an array name appears in an expression — including as a function argument — C converts it to a pointer to its first element. The function receives an address, not a copy of the data. |
-| **`array[i]` ≡ `*(array + i)`** | Array subscripting is defined as pointer arithmetic plus dereference. The compiler generates identical machine code for both forms. |
-| **`SENSOR_HISTORY_LEN`** | A preprocessor constant (`#define`) that controls buffer size in one place. Every array declaration, loop bound, and element-count expression references it. Phase 15 covers `#define` in full. |
+| **Pointer** | A variable that holds a memory address. `uint16_t *p` means `p` stores an address; `*p` follows that address to the `uint16_t` stored there. |
+| **Address-of operator (`&`)** | Produces the memory address of a variable. `&fuel` gives the address of the `fuel` variable — what you pass when a function needs to write back to the caller's storage. |
+| **Dereference operator (`*`)** | Follows a pointer to the value it addresses. `*reading += 5` reads the value at the address in `reading`, adds 5, and writes the result back to that same address. |
+| **Pointer arithmetic** | Advancing a pointer by one (`ptr++`) moves it by `sizeof(*ptr)` bytes — not 1 byte. For `uint16_t *`, each `++` moves 2 bytes, landing on the next element. |
+| **`const T *`** | Pointer to const data — the data pointed to cannot be modified through this pointer. The pointer itself can be reseated to point elsewhere. |
+| **`T * const`** | Const pointer — the pointer cannot be reseated; it always addresses the same location. The data it points to can be modified. |
+| **`T **`** | Pointer-to-pointer. `*pp` is the inner pointer; `**pp` is the value it ultimately points to. Pass `&ptr` to give a function the ability to change which address `ptr` holds. |
+| **Null pointer** | A pointer holding `NULL` (address 0) — a known-invalid address. Dereferencing causes a crash. Safe to test before use: `if (ptr != NULL)`. |
+| **Uninitialised pointer** | A pointer declared but never assigned — holds a garbage address. Dereferencing it is undefined behaviour; the crash may not occur at the dereference site. Always initialise: `uint16_t *p = NULL`. |
+| **Dangling pointer** | A pointer that once held a valid address but no longer does — the variable it pointed to went out of scope, or the allocated memory was freed. Reading or writing through it is undefined behaviour. |
 
 ---
 
 ## 🔍 What to notice in the code
 
-**[`sensors.h`](sensors.h)**
-Line 9 declares `#define SENSOR_HISTORY_LEN 10` with a NOTE pointing to Phase 15 — this is a preprocessor constant needed for the array size, which C requires to be a compile-time value. Lines 32–35 declare the four history API functions: two record functions that take a reading and two query functions that return results from the internal buffers.
+*Placeholder — completed after code is written.*
 
-**[`sensors.c:7–10`](sensors.c#L7)**
-The two history arrays and their write indices. All four are declared `static` at file scope — they are zero-initialized automatically (C guarantees this for file-scope statics), invisible outside `sensors.c`, and persist for the lifetime of the program. No other file can name `fuel_history` directly; the only access is through the public API.
+---
 
-**[`sensors.c:12–28`](sensors.c#L12)**
-`compute_average` is the key teaching function. The block comment explains both facts at once: `sizeof(buf)` inside this function gives the pointer size — not the array size — because the array decayed when it was passed; and `buf[i]` and `*(buf + i)` are identical, because the subscript operator is defined as pointer arithmetic plus dereference. Line 25 shows the equivalence inline in the loop.
+## 🔗 What this phase revealed
 
-**[`sensors.c:72–80`](sensors.c#L72)**
-`sensors_record_fuel` uses `sizeof(fuel_history) / sizeof(fuel_history[0])` as the modulo divisor for the circular index wrap. This is the one place in the codebase where `sizeof` is applied to the full array — the array is in scope here, not yet passed to a function, so the compiler knows its total size. Compare this to `compute_average` (line 22), where `sizeof(buf)` gives 8 instead.
+With pointers come new obligations. `sensors_calibrate(uint16_t *reading, uint16_t offset)` can now modify the caller's variable — but nothing in the type system prevents a caller from passing a null or dangling pointer. Every function that accepts a pointer either trusts its callers to pass a valid address or checks `reading != NULL` before dereferencing.
 
-**[`sensors.c:87–93`](sensors.c#L87)**
-The two public query functions pass `fuel_history` and `SENSOR_HISTORY_LEN` to the static helpers. This is the array decay in action: `fuel_history` in the call expression is a pointer to `fuel_history[0]`; the helpers receive `uint16_t *buf`, not a copy of the 20-byte array.
-
-**[`main.c:229–238`](main.c#L229)**
-Inside the `s` command block: each scan records the current fuel and velocity readings into the circular buffers, then prints the running average and drift status. After the first `s`, one slot is filled and nine are zero — the average is low, drift is detected. Press `s` ten times and the buffer fills with real readings; the average stabilises and drift may clear.
+> **LEARNING MOMENT:** Pass-by-value was simpler to reason about — the callee had no path back to the caller's stack. Pointers add power and add responsibility in equal measure. The three dangerous pointer errors (uninitialised, dangling, null dereference) are all consequences of the same trade-off: C lets you address memory directly, and it will not stop you from addressing the wrong location.
 
 ---
 
 ## ▶️ Running this branch
 
-**Prerequisites:** GCC or Clang (C99+) and CMake 3.10+, or just GCC/Clang on its own.
-
-**With CMake (recommended):**
-```bash
-cmake -B build
-cmake --build build
-.\build\Debug\calypso.exe   # Windows (MSVC)
-.\build\calypso.exe         # Windows (MinGW)
-./build/calypso             # Linux / macOS
-```
-
-**Direct compilation (no CMake):**
-```bash
-gcc -std=c99 main.c sensors.c engine.c navigation.c -o calypso
-./calypso
-```
-
-The program prints the boot banner, sensor reads, navigation results, and engine demo, then enters the command loop.
-
-| Command | Action |
-|---|---|
-| `n` | Advance the mission phase (`PREFLIGHT → LAUNCH → CRUISE → APPROACH → DOCKED`) |
-| `s` | Run the sensor scan — records fuel and velocity into the history buffers, then prints the running average and drift status |
-| `e` | Trigger the emergency shutdown via `goto` |
-| `q` | Normal quit via `break` |
-
-**To see the history buffer fill:**
-Press `s` repeatedly. After the first press, one slot holds 950 and nine hold zero — the average is 95.0 kg and drift is detected because the real reading deviates far from the zero-padded mean. After ten presses, all slots hold 950, the average stabilises at 950.0 kg, and drift clears.
-
-**Expected output — first sensor scan:**
-```
---- Periodic Sensor Scan ---
-  Sensor 0:  101.325  [NOMINAL]
-  Sensor 1: FAULTED -- skipping
-  Sensor 2: WARNING -- reading 3200.000 exceeds HIGH_WARN threshold
-ENGINE_STATUS          : 0x00000002
-Fuel avg (history)     : 95.0 kg  |  drift: DETECTED
-```
-
-**Expected output — tenth sensor scan (buffer full):**
-```
-Fuel avg (history)     : 950.0 kg  |  drift: none
-```
+*Placeholder — completed after code is written.*
 
 ---
 
 ## ✏️ Challenges for students
 
 **Challenge 1 — Analytical**
-`detect_drift()` receives `uint16_t *buf` and `int len`. Inside the function, `sizeof(buf)` gives 8 on a 64-bit platform — not `SENSOR_HISTORY_LEN * sizeof(uint16_t)`. Explain why. What information is lost when an array is passed to a function, and what must the caller pass explicitly to compensate?
+`uint16_t *ptr = fuel_history; ptr++;` — what address does `ptr` hold after the increment? What unit does pointer addition operate in, and how does the compiler determine the step size for each increment?
 
 **Challenge 2 — Analytical**
-`buf[i]` and `*(buf + i)` produce the same machine code. Explain what the equivalence reveals: what unit does pointer addition operate in, and how does the compiler know the step size for each increment?
+Why is an uninitialised pointer more dangerous than a null pointer? What is different about how you would detect each one before dereferencing it?
 
 **Challenge 3 — Analytical**
-`fuel_history` is declared `uint16_t fuel_history[SENSOR_HISTORY_LEN]` at file scope in `sensors.c`. What happens if the loop that fills it writes to index `SENSOR_HISTORY_LEN` — one past the last valid slot? Why doesn't C report an error, and what could the program do next?
+`const uint16_t *buf` and `uint16_t * const ptr` look similar but restrict different things. Name what each restricts, and give one example from the Calypso codebase where each is the right qualifier to use.
 
 **Challenge 4 — Additive**
-Add a `static uint16_t pressure_history[SENSOR_HISTORY_LEN]` buffer to `sensors.c`, alongside `sensors_record_pressure(uint16_t reading)` and `sensors_compute_pressure_avg(void)` functions. Follow the same pattern as the fuel buffer. Add the prototypes to `sensors.h`. Call `sensors_record_pressure()` from `main.c` in the sensor-scan command and print the running pressure average alongside the fuel average.
+Add `sensors_calibrate_velocity(uint16_t *reading, uint16_t offset)` to `sensors.c` and `sensors.h`, following the same pattern as `sensors_calibrate()`. Call it from `main.c` on the result of `(uint16_t)velocity` before the sensor scan prints, and confirm the calibrated value appears in the output.
 
 **Challenge 5 — Additive (stretch)**
-Modify `sensors_detect_fuel_drift()` so that instead of returning `bool`, it returns the index of the first reading that deviates from the mean by more than the threshold, or `-1` if no such reading exists. Update the return type to `int` in both `sensors.h` and `sensors.c`. Update the call site in `main.c` to print the index when drift is detected rather than a boolean flag.
+Add `void sensors_print_history_ptr(const uint16_t *buf, int len)` to `sensors.c` and `sensors.h`. It should iterate over the buffer using a pointer variable (`ptr++`, not index notation) and print each element's value and memory address using `printf` and `%p`. Call it from `main.c` after the fuel average line in the `s` command.
 
 ---
 
 ## 💭 Thought pieces for the next branch
 
-1. We pass the sensor buffer into `compute_average()` and it can read the buffer just fine. What if it needed to reset the buffer — write zeros into every slot? It only received a pointer to the first element. Can it write back through that pointer?
-2. `array[i]` and `*(array + i)` produce the same result. What does that tell us about how array indexing actually works in memory — what is the compiler computing when it locates element `i`?
-3. The calibration function receives a sensor reading and computes a correction — but it operates on a copy. After it returns, the original is unchanged. How do we fix that?
+1. The comms log prints `"UNKNOWN"` for every crew name because there is no way to store text. How does C represent text in memory — what is a "string" at the byte level?
+2. The shuttle has a designation `"CALYPSO-7"`. If we store it as `char *designation = "CALYPSO-7"` and then try to modify the last character, what happens and why?
+3. We want to find a specific crew member by name. Can we compare two strings with `==`? What would that actually compare?
 
 ---
 
-*Previous branch: [`phase-08_functions`]*
-*Next branch: [`phase-10_pointers`]*
+*Previous branch: [`phase-09_arrays`]*
+*Next branch: [`phase-11_strings`]*
