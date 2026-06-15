@@ -1,9 +1,14 @@
-/* sensors.h -- sensor read and fault-check declarations */
+/* sensors.h -- sensor read, fault-check, and history buffer declarations */
 
 #include <stdint.h>
 #include <stdbool.h>
 
 typedef float sensor_float_t;
+
+/* NOTE: #define constant -- preprocessor macros are covered in Phase 15 */
+#define SENSOR_HISTORY_LEN 10
+
+/* --- Sensor reads ---------------------------------------------------- */
 
 sensor_float_t sensors_read_velocity(void);
 uint16_t       sensors_read_fuel(uint16_t tank_capacity_kg,
@@ -21,3 +26,10 @@ sensor_float_t sensors_read_pressure(void);
  * own copy; the caller's variable is unchanged after the call returns.
  */
 uint16_t       sensors_apply_calibration(uint16_t reading, uint16_t offset);
+
+/* --- History buffers ------------------------------------------------- */
+
+void           sensors_record_fuel(uint16_t reading);
+void           sensors_record_velocity(uint16_t reading);
+sensor_float_t sensors_compute_fuel_avg(void);
+bool           sensors_detect_fuel_drift(void);

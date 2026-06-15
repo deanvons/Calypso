@@ -228,7 +228,16 @@ int main(void) {
                 else                            level = "LOW";
                 printf("  Sensor %d: %8.3f  [%s]\n", i, readings[i], level);
             }
-            printf("ENGINE_STATUS          : 0x%08" PRIX32 "\n\n", engine_get_status());
+            printf("ENGINE_STATUS          : 0x%08" PRIX32 "\n", engine_get_status());
+
+            /* record current readings into the circular history buffers */
+            sensors_record_fuel(fuel);
+            sensors_record_velocity((uint16_t)velocity);
+
+            sensor_float_t fuel_avg  = sensors_compute_fuel_avg();
+            bool           drift     = sensors_detect_fuel_drift();
+            printf("Fuel avg (history)     : %.1f kg  |  drift: %s\n\n",
+                   fuel_avg, drift ? "DETECTED" : "none");
         }
 
         if (engine_fault_critical()) {
