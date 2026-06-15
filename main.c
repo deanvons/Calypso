@@ -231,10 +231,17 @@ int main(void) {
             // NOTE: float-to-integer cast truncates toward zero (32.7f → 32); precision loss is intentional
             sensors_record_velocity((uint16_t)velocity);
 
-            sensor_float_t fuel_avg  = sensors_compute_fuel_avg();
-            bool           drift     = sensors_detect_fuel_drift();
-            printf("Fuel avg (history)     : %.1f kg  |  drift: %s\n\n",
-                   fuel_avg, drift ? "DETECTED" : "none");
+            sensor_float_t fuel_avg   = sensors_compute_fuel_avg();
+            // SOLUTION (Challenge 5): drift returns the drifting index, or -1
+            int            drift_idx  = sensors_detect_fuel_drift();
+            printf("Fuel avg (history)     : %.1f kg  |  drift at index: %d\n",
+                   fuel_avg, drift_idx);
+
+            // SOLUTION (Challenge 4): record pressure into history and print average
+            // NOTE: float-to-integer cast truncates toward zero (101.325f → 101)
+            sensors_record_pressure((uint16_t)cabin_pressure);
+            sensor_float_t pressure_avg = sensors_compute_pressure_avg();
+            printf("Pressure avg (history) : %.1f kPa\n\n", pressure_avg);
         }
 
         if (engine_fault_critical()) {

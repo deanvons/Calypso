@@ -27,16 +27,19 @@ static sensor_float_t compute_average(uint16_t *buf, int len) {
     return sum / (sensor_float_t)len;
 }
 
-static bool detect_drift(uint16_t *buf, int len, uint16_t threshold) {
+/* SOLUTION (Challenge 5): returns the index of the first reading that deviates
+ * from the mean by more than threshold, or -1 if no such reading exists.
+ */
+static int detect_drift(uint16_t *buf, int len, uint16_t threshold) {
     sensor_float_t avg = compute_average(buf, len);
     for (int i = 0; i < len; i++) {
         sensor_float_t diff = (sensor_float_t)buf[i] - avg;
         if (diff < 0.0f) diff = -diff;
         if (diff > (sensor_float_t)threshold) {
-            return true;
+            return i;
         }
     }
-    return false;
+    return -1;
 }
 
 sensor_float_t sensors_read_velocity(void) {
@@ -88,6 +91,20 @@ sensor_float_t sensors_compute_fuel_avg(void) {
     return compute_average(fuel_history, SENSOR_HISTORY_LEN);
 }
 
-bool sensors_detect_fuel_drift(void) {
+// SOLUTION (Challenge 5): return type changed from bool to int
+int sensors_detect_fuel_drift(void) {
     return detect_drift(fuel_history, SENSOR_HISTORY_LEN, 50);
+}
+
+/* SOLUTION (Challenge 4): pressure history buffer */
+static uint16_t pressure_history[SENSOR_HISTORY_LEN];
+static int      pressure_idx = 0;
+
+void sensors_record_pressure(uint16_t reading) {
+    pressure_history[pressure_idx] = reading;
+    pressure_idx = (pressure_idx + 1) % SENSOR_HISTORY_LEN;
+}
+
+sensor_float_t sensors_compute_pressure_avg(void) {
+    return compute_average(pressure_history, SENSOR_HISTORY_LEN);
 }

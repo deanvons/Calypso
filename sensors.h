@@ -32,4 +32,9 @@ uint16_t       sensors_apply_calibration(uint16_t reading, uint16_t offset);
 void           sensors_record_fuel(uint16_t reading);
 void           sensors_record_velocity(uint16_t reading);
 sensor_float_t sensors_compute_fuel_avg(void);
-bool           sensors_detect_fuel_drift(void);
+// SOLUTION (Challenge 5): return index of first drifting reading, or -1 if none
+int            sensors_detect_fuel_drift(void);
+
+// SOLUTION (Challenge 4): pressure history buffer API
+void           sensors_record_pressure(uint16_t reading);
+sensor_float_t sensors_compute_pressure_avg(void);
