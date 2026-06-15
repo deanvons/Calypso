@@ -128,7 +128,7 @@ When you call any function in this codebase, C copies your argument into the fun
 ## 🎯 What we're doing in this branch
 
 - Extract sensor operations into `sensors.c` and `sensors.h` — `sensors_read_fuel()`, `sensors_read_velocity()`, `sensors_in_fault()`, `sensors_apply_calibration()`; the `sensor_float_t` typedef moves to `sensors.h`
-- Extract engine control into `engine.c` and `engine.h` — `engine_enable_thruster()`, `engine_disable_thruster()`, `engine_set_throttle()`, `engine_read_throttle()`, `engine_get_ctrl()`, `engine_get_status()`, `engine_set_fault()`, `engine_clear_status()`, `engine_fault_critical()`, `engine_reset()`; `ENGINE_CTRL` and `ENGINE_STATUS` become `static` file-scope variables invisible to `main.c`
+- Extract engine control into `engine.c` and `engine.h` — `engine_enable_thruster()`, `engine_disable_thruster()`, `engine_set_throttle()`, `engine_read_throttle()`, `engine_get_ctrl()`, `engine_get_status()`, `engine_set_sensor_fault()`, `engine_set_temp_warning()`, `engine_set_critical_fault()`, `engine_clear_status()`, `engine_fault_critical()`, `engine_reset()`; `ENGINE_CTRL` and `ENGINE_STATUS` become `static` file-scope variables invisible to `main.c`
 - Extract navigation calculations into `navigation.c` and `navigation.h` — `nav_burn_rate()`, `nav_hours_to_dest()`, `nav_approach_safe()`
 - Demonstrate pass-by-value explicitly: `sensors_apply_calibration()` modifies a local copy of the argument; the caller's variable is unchanged after the call
 - Update `CMakeLists.txt` to compile all four source files together into the single executable
@@ -178,16 +178,16 @@ When you call any function in this codebase, C copies your argument into the fun
 The `sensor_float_t` typedef moves here from `main.c`. Every file that needs the type includes `sensors.h` — one definition, one place. The four function prototypes are declarations only: they tell the compiler the signature without revealing how the function works. `sensors_apply_calibration()` carries a multi-line comment explaining the pass-by-value contract; that comment is the learning moment for callers.
 
 **[`sensors.c`](sensors.c)**
-The `// NOTE:` comment on `sensors_apply_calibration()` (line 23) marks exactly where the copy semantics are visible — `reading += offset` increments the local parameter, not the caller's variable. The function then returns the modified copy. A reader unfamiliar with pass-by-value should stop here.
+The `// NOTE:` comment on `sensors_apply_calibration()` (line 22) marks exactly where the copy semantics are visible — `reading += offset` increments the local parameter, not the caller's variable. The function then returns the modified copy. A reader unfamiliar with pass-by-value should stop here.
 
 **[`engine.c`](engine.c)**
-`static uint32_t ENGINE_CTRL = 0u` and `static uint32_t ENGINE_STATUS = 0u` (lines 22–23) are the key change from Phase 7. These are the same variables that lived as plain globals in `main.c`; `static` at file scope restricts their visibility to the functions in this file. `main.c` cannot name them — the compiler enforces the boundary. The bit-position constants (`THROTTLE_SHIFT`, `CRITICAL_FAULT_BIT`, etc.) are also `static` and private. Callers never need to know the register layout; they call `engine_set_critical_fault()` and let the module do the bit work.
+`static uint32_t ENGINE_CTRL = 0u` and `static uint32_t ENGINE_STATUS = 0u` (lines 20–21) are the key change from Phase 7. These are the same variables that lived as plain globals in `main.c`; `static` at file scope restricts their visibility to the functions in this file. `main.c` cannot name them — the compiler enforces the boundary. The bit-position constants (`THROTTLE_SHIFT`, `CRITICAL_FAULT_BIT`, etc.) are also `static` and private. Callers never need to know the register layout; they call `engine_set_critical_fault()` and let the module do the bit work.
 
 **[`engine.h`](engine.h)**
 Compare `engine.h` to `engine.c`: the header has twelve function prototypes and no data. The registers, the bit positions, the shift constants — none of it is visible here. This is the module's public contract: what it offers, nothing more.
 
 **[`navigation.c`](navigation.c)**
-Each function is one expression: a calculation, a comparison, a return. The `// NOTE:` on `nav_hours_to_dest()` (line 10) points back to the Phase 5 parenthesisation explanation — the logic didn't change, it moved into a named function. Phase 8 adds no new arithmetic; it gives the arithmetic a name.
+Each function is one expression: a calculation, a comparison, a return. The `// NOTE:` on `nav_hours_to_dest()` (line 9) points back to the Phase 5 parenthesisation explanation — the logic didn't change, it moved into a named function. Phase 8 adds no new arithmetic; it gives the arithmetic a name.
 
 **[`main.c:60–62`](main.c#L60)**
 The pass-by-value demonstration. `fuel` is printed before and after the call to `sensors_apply_calibration(fuel, 5)` — the value is identical. The returned copy (`fuel_calibrated`) has the offset applied. These two lines prove that the function received a copy, not the original.
@@ -269,7 +269,7 @@ C does not support function overloading. Look at `sensors_read_fuel()` and `sens
 Add a `sensors_read_pressure(void)` function to `sensors.c` and `sensors.h` that returns the cabin pressure value as a `sensor_float_t`. Write its prototype in `sensors.h`. Call it from `main.c` in the boot banner to display cabin pressure, replacing the inline literal `101.325f`. The function should return `101.325f`.
 
 **Challenge 5 — Additive (stretch)**
-`navigation.c` already has `nav_hours_to_dest()` for time calculations. Add a `nav_fuel_efficiency(uint32_t distance_km, uint16_t fuel_kg)` function to `navigation.c` and `navigation.h` that returns fuel efficiency as a `sensor_float_t` (km per kg) using floating-point division. Replace the inline efficiency calculation in `main.c` with a call to this new function, and verify the output matches the previous result.
+`navigation.c` already has `nav_hours_to_dest()` for time calculations. Add a `nav_fuel_efficiency(uint32_t distance_km, uint16_t fuel_kg)` function to `navigation.c` and `navigation.h` that returns fuel efficiency as a `sensor_float_t` (km per kg) using floating-point division. Call it from `main.c` with `distance_to_dest_km` and `fuel`, print the result, and verify the value is correct.
 
 ---
 
