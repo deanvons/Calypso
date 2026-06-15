@@ -14,3 +14,8 @@ sensor_float_t nav_hours_to_dest(uint32_t distance_km, sensor_float_t velocity_k
 bool nav_approach_safe(sensor_float_t velocity_kms, uint16_t fuel_kg) {
     return (velocity_kms <= 2.0f) && (fuel_kg >= 50);
 }
+
+/* SOLUTION (Challenge 5): floating-point division gives km per kg efficiency */
+sensor_float_t nav_fuel_efficiency(uint32_t distance_km, uint16_t fuel_kg) {
+    return (sensor_float_t)distance_km / (sensor_float_t)fuel_kg;
+}

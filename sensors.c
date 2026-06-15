@@ -19,6 +19,11 @@ bool sensors_in_fault(sensor_float_t reading,
     return reading < low || reading > high;
 }
 
+// SOLUTION (Challenge 4): cabin pressure sensor returning a fixed nominal value
+sensor_float_t sensors_read_pressure(void) {
+    return 101.325f;
+}
+
 // NOTE: 'reading' is a local copy -- adding offset here does not affect the caller's variable
 uint16_t sensors_apply_calibration(uint16_t reading, uint16_t offset) {
     reading += offset;

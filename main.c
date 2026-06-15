@@ -41,8 +41,8 @@ int main(void) {
 
     bool velocity_fault = sensors_in_fault(velocity, 0.0f, 25.0f);
 
-    // NOTE: cabin pressure is an inline value here -- sensors_read_pressure() is Challenge 4
-    sensor_float_t cabin_pressure = 101.325f;
+    // SOLUTION (Challenge 4): replace inline literal with the sensor function
+    sensor_float_t cabin_pressure = sensors_read_pressure();
     bool pressure_fault = sensors_in_fault(cabin_pressure, 80.0f, 120.0f);
 
     printf("Fuel level           : %" PRIu16 " kg\n", fuel);
@@ -73,7 +73,11 @@ int main(void) {
     printf("Hours to destination : %8.2f h\n", hours);
 
     bool approach_safe = nav_approach_safe(velocity, fuel);
-    printf("Approach safe        : %s\n\n", approach_safe ? "YES" : "NO");
+    printf("Approach safe        : %s\n", approach_safe ? "YES" : "NO");
+
+    // SOLUTION (Challenge 5): fuel efficiency calculation
+    sensor_float_t efficiency = nav_fuel_efficiency(distance_to_dest_km, fuel);
+    printf("Fuel efficiency      : %8.2f km/kg\n\n", efficiency);
 
     /* --- Engine control ------------------------------------------------ */
 
