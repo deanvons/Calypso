@@ -190,7 +190,7 @@ The two history arrays and their write indices. All four are declared `static` a
 **[`sensors.c:87–93`](sensors.c#L87)**
 The two public query functions pass `fuel_history` and `SENSOR_HISTORY_LEN` to the static helpers. This is the array decay in action: `fuel_history` in the call expression is a pointer to `fuel_history[0]`; the helpers receive `uint16_t *buf`, not a copy of the 20-byte array.
 
-**[`main.c:229–236`](main.c#L229)**
+**[`main.c:229–238`](main.c#L229)**
 Inside the `s` command block: each scan records the current fuel and velocity readings into the circular buffers, then prints the running average and drift status. After the first `s`, one slot is filled and nine are zero — the average is low, drift is detected. Press `s` ten times and the buffer fills with real readings; the average stabilises and drift may clear.
 
 ---
