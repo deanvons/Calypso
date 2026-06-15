@@ -196,10 +196,6 @@ int main(void) {
         }
 
         if (cmd == 's') {
-            /*
-             * NOTE: arrays are covered formally in Phase 9 -- these small
-             * fixed-size local arrays give the for loop something to iterate over.
-             */
             /* NOTE: readings[2] = 3200.0f is a demonstration value to show the HIGH_WARN path */
             sensor_float_t readings[3] = { cabin_pressure, velocity, 3200.0f };
             bool faults[3] = {

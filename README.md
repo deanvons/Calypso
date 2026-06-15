@@ -175,13 +175,71 @@ flowchart TD
 
 ## 🔍 What to notice in the code
 
-*Placeholders — completed after code is written.*
+**[`sensors.h`](sensors.h)**
+Line 9 declares `#define SENSOR_HISTORY_LEN 10` with a NOTE pointing to Phase 15 — this is a preprocessor constant needed for the array size, which C requires to be a compile-time value. Lines 32–35 declare the four history API functions: two record functions that take a reading and two query functions that return results from the internal buffers.
+
+**[`sensors.c:7–10`](sensors.c#L7)**
+The two history arrays and their write indices. All four are declared `static` at file scope — they are zero-initialized automatically (C guarantees this for file-scope statics), invisible outside `sensors.c`, and persist for the lifetime of the program. No other file can name `fuel_history` directly; the only access is through the public API.
+
+**[`sensors.c:12–28`](sensors.c#L12)**
+`compute_average` is the key teaching function. The block comment explains both facts at once: `sizeof(buf)` inside this function gives the pointer size — not the array size — because the array decayed when it was passed; and `buf[i]` and `*(buf + i)` are identical, because the subscript operator is defined as pointer arithmetic plus dereference. Line 25 shows the equivalence inline in the loop.
+
+**[`sensors.c:72–80`](sensors.c#L72)**
+`sensors_record_fuel` uses `sizeof(fuel_history) / sizeof(fuel_history[0])` as the modulo divisor for the circular index wrap. This is the one place in the codebase where `sizeof` is applied to the full array — the array is in scope here, not yet passed to a function, so the compiler knows its total size. Compare this to `compute_average` (line 22), where `sizeof(buf)` gives 8 instead.
+
+**[`sensors.c:87–93`](sensors.c#L87)**
+The two public query functions pass `fuel_history` and `SENSOR_HISTORY_LEN` to the static helpers. This is the array decay in action: `fuel_history` in the call expression is a pointer to `fuel_history[0]`; the helpers receive `uint16_t *buf`, not a copy of the 20-byte array.
+
+**[`main.c:229–236`](main.c#L229)**
+Inside the `s` command block: each scan records the current fuel and velocity readings into the circular buffers, then prints the running average and drift status. After the first `s`, one slot is filled and nine are zero — the average is low, drift is detected. Press `s` ten times and the buffer fills with real readings; the average stabilises and drift may clear.
 
 ---
 
 ## ▶️ Running this branch
 
-*Placeholders — completed after code is written.*
+**Prerequisites:** GCC or Clang (C99+) and CMake 3.10+, or just GCC/Clang on its own.
+
+**With CMake (recommended):**
+```bash
+cmake -B build
+cmake --build build
+.\build\Debug\calypso.exe   # Windows (MSVC)
+.\build\calypso.exe         # Windows (MinGW)
+./build/calypso             # Linux / macOS
+```
+
+**Direct compilation (no CMake):**
+```bash
+gcc -std=c99 main.c sensors.c engine.c navigation.c -o calypso
+./calypso
+```
+
+The program prints the boot banner, sensor reads, navigation results, and engine demo, then enters the command loop.
+
+| Command | Action |
+|---|---|
+| `n` | Advance the mission phase (`PREFLIGHT → LAUNCH → CRUISE → APPROACH → DOCKED`) |
+| `s` | Run the sensor scan — records fuel and velocity into the history buffers, then prints the running average and drift status |
+| `e` | Trigger the emergency shutdown via `goto` |
+| `q` | Normal quit via `break` |
+
+**To see the history buffer fill:**
+Press `s` repeatedly. After the first press, one slot holds 950 and nine hold zero — the average is 95.0 kg and drift is detected because the real reading deviates far from the zero-padded mean. After ten presses, all slots hold 950, the average stabilises at 950.0 kg, and drift clears.
+
+**Expected output — first sensor scan:**
+```
+--- Periodic Sensor Scan ---
+  Sensor 0:  101.325  [NOMINAL]
+  Sensor 1: FAULTED -- skipping
+  Sensor 2: WARNING -- reading 3200.000 exceeds HIGH_WARN threshold
+ENGINE_STATUS          : 0x00000002
+Fuel avg (history)     : 95.0 kg  |  drift: DETECTED
+```
+
+**Expected output — tenth sensor scan (buffer full):**
+```
+Fuel avg (history)     : 950.0 kg  |  drift: none
+```
 
 ---
 
