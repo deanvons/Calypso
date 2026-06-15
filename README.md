@@ -1,12 +1,14 @@
-# Phase README — Modular Architecture
+# Phase README — Sensor History Buffer
 
-> **Phase 08 — Functions and Program Organisation** | Calypso · Core C
+> **Phase 09 — Arrays** | Calypso · Core C
 
-Splitting a 490-line monolith into named modules — each with a header that declares its interface and a source file that keeps its implementation private.
+Fixed-size circular history buffers for two sensor channels — filling each slot with a `for` loop, computing averages, and detecting drift across a sequence of readings.
 
-By the end of Phase 7, `main.c` runs the entire flight computer: sensor reads, navigation calculations, engine register operations, the command loop, the state machine, and the emergency shutdown path all share one file and one scope. Everything can see and overwrite everything else. The critical fault threshold appears in two separate `switch` cases; `ENGINE_CTRL` is written from multiple locations with no boundary between them; adding a new sensor read means scrolling past 400 lines of code that has nothing to do with sensors. This phase introduces functions and header files as the mechanism for enforcing boundaries — each module owns its data, declares what it offers, and hides how it works.
+Every sensor in the current system returns a single snapshot — one `uint16_t` reading per call. That is sufficient for a dashboard display, but it tells you nothing about whether the value has been rising, falling, or spiking over the last several seconds. Anomaly detection — the kind that catches a slow fuel leak before it becomes a crisis — requires a sequence. The fix is to store readings over time, which means allocating a block of memory large enough to hold N values of the same type.
 
-> **A note on scope.** Pass-by-value is demonstrated explicitly in this phase using `sensors_apply_calibration()`. Modifying data through a pointer — the mechanism that lets a function change a caller's variable — is the subject of Phase 10. Any forward mention of pointers in this phase is a preview, not a requirement.
+An array is the simplest possible answer: a fixed-size, contiguous block of same-type elements, each addressable by a zero-based index. `uint16_t fuel_history[SENSOR_HISTORY_LEN]` reserves ten consecutive `uint16_t` slots in memory. A `for` loop fills them. `sizeof(fuel_history) / sizeof(fuel_history[0])` derives the element count without repeating the number. And when the buffer is passed to `compute_average()`, C does not copy all twenty bytes — it converts the array name to a pointer to its first element. That conversion, and what it means for `sizeof` inside the function, is the hidden lesson of this phase.
+
+> **A note on scope.** Arrays in C decay to a pointer to their first element when passed to a function — this is how `compute_average()` can read the buffer without copying it. Pointers are the subject of Phase 10 and are introduced here only to explain the decay. Writing back through a pointer, pointer arithmetic as a standalone tool, and multi-level pointers are Phase 10 material.
 
 ---
 
@@ -38,8 +40,8 @@ By the end of Phase 7, `main.c` runs the entire flight computer: sensor reads, n
 | `phase-05_operators` | Arithmetic · relational · logical · `sizeof` · explicit casts | — |
 | `phase-06_bitwise` | Bitmasks · `ENGINE_CTRL` register · `1u << n` shift pattern | — |
 | `phase-07_control-flow` | `while(1)` command loop · `switch` state machine · `goto` emergency shutdown | — |
-| `📌 phase-08_functions` | **`sensors.c` / `engine.c` / `navigation.c` split · prototypes · pass-by-value** | Modular |
-| `phase-09_arrays` | Circular sensor history buffers · `sizeof` element count · `array[i]` ≡ `*(array + i)` | — |
+| `phase-08_functions` | `sensors.c` / `engine.c` / `navigation.c` split · prototypes · pass-by-value | Modular |
+| `📌 phase-09_arrays` | **Sensor history buffers · `sizeof` element count · `array[i]` ≡ `*(array + i)`** | — |
 | `phase-10_pointers` | `&` / `*` · pointer arithmetic · `const T*` vs `T* const` · `**` | — |
 | `phase-11_strings` | `char` arrays · `strncpy` / `strcmp` / `strlen` · null terminator | — |
 | `phase-12_structs` | `crew_member_t` · `spacecraft_t` · dot / arrow notation · nested structs | — |
@@ -63,97 +65,97 @@ git log --oneline          # find the SOLUTION commit hash
 git show <hash>            # inspect the solution in isolation
 ```
 
-### Challenge 1 — Intentional fallthrough and `-Wimplicit-fallthrough`
+### Challenge 1 — What C copies in pass-by-value
 
-When `current_phase == LAUNCH`, the switch enters `case LAUNCH:` and runs in order: first `printf("  Launch: ignition sequence active\n")`, then falls through — no `break` — into `case CRUISE:`, which executes `printf("  Active burn: throttle=... | fuel=... | STATUS=...")` before the shared `break`. Two `printf` calls execute. `-Wimplicit-fallthrough` warns when a case has no `break` or `return` and execution would continue into the next case — it catches accidental omissions. The `/* FALLTHROUGH */` comment is recognised by GCC and Clang as explicit intent, suppressing the warning exactly where the fallthrough is deliberate rather than a bug.
+When you call `sensors_apply_calibration(fuel, 5)`, C evaluates `fuel` at the call site and copies that integer value into the function's `reading` parameter. `reading` is a new, separate variable on the stack — it holds the same number, but it is not the same storage location. There is no path back to the caller's `fuel` from inside the function because the function was never given the address of `fuel`, only its value. The returned result is a second copy, computed from the modified local and handed back through the return register.
 
-### Challenge 2 — `do-while` rewritten as `while`
+### Challenge 2 — `static` file scope and what it prevents
 
-The extra line required before the loop is the initialiser: `char cmd = '\0';`. A `while` loop tests its condition before the body executes, so `cmd` must already hold a value that makes the condition true on the first check — any non-valid command character (including `'\0'`) works. The `do-while` form eliminates that requirement because the body always runs before the condition is first tested; `cmd` is set by `scanf` inside the body, so there is nothing to pre-initialise. Both forms produce identical runtime behaviour; the `do-while` version is shorter and expresses the guarantee in the loop structure rather than in a pre-initialiser.
+`static uint32_t ENGINE_CTRL` at file scope in `engine.c` limits the variable's visibility to the translation unit it is declared in. No other `.c` file can name it — there is no declaration visible outside `engine.c`, so any attempt to write `ENGINE_CTRL = ...` in `main.c` is a compile error. If you replaced `static` with no qualifier and added `extern uint32_t ENGINE_CTRL` in `engine.h`, every file that includes `engine.h` could read and write the register directly. Two specific bugs that `static` makes impossible: the navigation section accidentally clearing `ENGINE_CTRL` with a stray assignment, and the state machine in `main.c` writing a bit position directly instead of calling the function that validates the throttle range.
 
-### Challenge 4 — `continue` in `for` vs `while`
+### Challenge 3 — Naming convention and the `printf` family
 
-In a `for` loop, `continue` jumps to the increment expression (`i++`) before re-testing the condition — the increment still runs for the iteration where `continue` fired. In a `while` loop, `continue` jumps directly to the condition check; there is no implicit increment. Rewriting the sensor scan as a `while` requires a manual `i++` placed before each `continue`; without it, `i` stays at the faulted index forever, the condition `i < SENSOR_COUNT` remains true, and the loop never terminates.
+Following the module prefix convention in this codebase, the function would be named `sensors_read_pressure()`. The C standard library solves the same naming problem differently: the `printf` family uses suffixes that encode the output target — `printf` writes to `stdout`, `fprintf` to a `FILE *`, `sprintf` to a `char` buffer, `snprintf` adds a length bound. Each is a distinct function with a distinct name; C has no overloading to let them share one. The convention in both cases is the same: the name encodes what the function operates on or where its output goes.
 
-### Thought piece 1 — Risks of a growing monolithic `main.c`
+### Thought piece 1 — A data structure that holds a sequence of values
 
-A single source file with a single flat scope means every variable is visible to every line of code. As the file grows, any change carries the risk of accidentally interfering with unrelated logic — the navigation section can read or overwrite sensor variables, and the compiler cannot tell you that was wrong. There is no way to express intent: "this part of the code owns `ENGINE_CTRL`" is a comment, not an enforceable boundary. This phase resolves that: each module owns its data, and the compiler enforces the boundary through scope and `static`.
+An array. `uint16_t fuel_history[SENSOR_HISTORY_LEN]` reserves ten consecutive `uint16_t` slots in memory — each addressable by index from 0 to `SENSOR_HISTORY_LEN - 1`. That is exactly the structure `compute_average()` needs: a fixed block of readings, all of the same type, all adjacent, all addressable. This phase adds that structure to Calypso's sensor module.
 
-### Thought piece 2 — Restricting who can write to `ENGINE_CTRL`
+### Thought piece 2 — Passing an address instead of a copy
 
-Moving `ENGINE_CTRL` into `engine.c` as a `static` file-scope variable. `static` at file scope restricts visibility to the translation unit it is declared in — no other `.c` file can name or access the variable. All register writes go through `engine.c` functions (`engine_enable_thruster()`, `engine_set_throttle()`, `engine_reset()`). The compiler enforces this: `main.c` has no declaration of `ENGINE_CTRL`, so any attempt to use the name directly is a compile error.
+A pointer to the variable. If a calibration function needs to write a corrected value back to the caller's variable, it needs the address of that variable — not a copy of its current content. You would pass the address with `&reading` at the call site; the function receives a `uint16_t *` parameter and writes through it with the dereference operator `*`. Phase 10 builds this mechanism in full.
 
-### Thought piece 3 — Defining a constant once and using it everywhere
+### Thought piece 3 — Memory for a sequence of `uint16_t` values
 
-`#define`. The preprocessor replaces every occurrence of the name with the literal value before the compiler sees the source. A single `#define CRITICAL_FAULT_TEMP 120` in a shared header means every `switch` case that checks the threshold uses the same value — changing it in one place changes it everywhere. This question is answered in Phase 15, which introduces `#define`, include guards, and conditional compilation throughout the codebase.
+One `uint16_t` occupies 2 bytes. Twenty of them occupy 40 bytes — they sit contiguously in memory with no gaps between elements of the same type. When you pass an array to a function, C does not copy all 40 bytes; it passes a pointer to the first element. The function receives 8 bytes on a 64-bit platform — the address of the start of the buffer. It can reach any element from there using index arithmetic, but it does not receive the data itself.
 
 ---
 
 ## 💡 Why we made this decision
 
-### The single file was deliberate — until now
+### A snapshot is not a trend
 
-Every construct in Phases 1–7 lived in `main.c` so you could see the entire program in one place while learning each feature. By Phase 7 that file is nearly 500 lines holding seven distinct concerns: boot diagnostics, sensor reads, navigation calculations, engine register operations, a command loop, a state machine, and an emergency shutdown path. None of them is isolated from the others. `ENGINE_CTRL` is a global written from at least three separate locations; the critical fault temperature appears in two `switch` cases; nothing prevents the navigation section from accidentally overwriting a sensor variable.
+`sensors_read_fuel()` returns the current reading. That is sufficient for a dashboard display, but it tells you nothing about whether the value has been rising, falling, or spiking intermittently over the last ten seconds. Catching a slow fuel leak before it becomes a crisis requires a sequence. The fix is to store readings over time in a block of memory large enough to hold N values of the same type and addressable by index.
 
-The problem is not the length — it is the coupling. When every name is visible from everywhere, every change carries risk across the whole file. Functions and header files are the fix: a module declares what it offers and hides how it works. `main.c` becomes a caller, not a container.
+An array is the simplest possible answer. The alternative — N separate named variables (`reading_0`, `reading_1`, ... `reading_9`) — does not scale and cannot be iterated. An array is what a `for` loop was built for.
 
-### `ENGINE_CTRL` becomes a file-scope static
+### `SENSOR_HISTORY_LEN` as the single source of truth
 
-The most significant structural change is that `ENGINE_CTRL` and `ENGINE_STATUS` move from `main.c`'s global scope into `engine.c` as `static uint32_t` variables. `static` at file scope means "visible only within this translation unit" — `main.c` cannot name or access the register directly. All register access goes through `engine.c` functions. The module boundary is enforced by the compiler, not by convention.
+The buffer length appears in three places: the declaration, the loop that fills it, and the element count passed to analysis functions. All three use `SENSOR_HISTORY_LEN`. If you change one number, every use updates. If the length were a magic literal — `[10]` here, `10` there, `10` again in the loop bound — a change in one place would silently leave the others stale, and the resulting out-of-bounds access would be undefined behaviour with no compile-time warning. `SENSOR_HISTORY_LEN` is a preprocessor `#define` here; Phase 15 covers `#define` properly and explains why this form is preferred over `const int` for array sizes in C.
+
+### Array decay to pointer
+
+When you write `compute_average(fuel_history, SENSOR_HISTORY_LEN)`, you are not copying the entire buffer. C converts `fuel_history` — the array name — to a pointer to its first element and passes that address. The function signature receives `uint16_t *buf` — a memory address, not a copy. This is not a special rule; it is the fundamental connection between arrays and pointers in C: `array[i]` is defined as `*(array + i)`, and the array name in an expression context is a pointer to element zero. One consequence is that `sizeof(buf)` inside `compute_average()` gives the pointer size, not the array size — which is why the buffer length must be passed as a separate parameter. Phase 10 explores this connection from the pointer side.
 
 ```mermaid
 flowchart TD
-    main["main.c\n(orchestrator)"]
-    sensors["sensors.h / sensors.c"]
-    engine["engine.h / engine.c\nstatic ENGINE_CTRL\nstatic ENGINE_STATUS"]
-    navigation["navigation.h / navigation.c"]
+    main["main.c\n(records readings on each scan)"]
+    record["sensors_record_fuel(reading)\nsensors_record_velocity(reading)\n— fills circular buffer by index —"]
+    buffers["static fuel_history[SENSOR_HISTORY_LEN]\nstatic velocity_history[SENSOR_HISTORY_LEN]\n(file-scope, invisible outside sensors.c)"]
+    helpers["static compute_average(buf, len)\nstatic detect_drift(buf, len, threshold)\n— receive pointer to first element —"]
+    query["sensors_compute_fuel_avg()\nsensors_detect_fuel_drift()\n— public: pass buffer + length to helpers —"]
 
-    main -->|"sensors_read_fuel()\nsensors_read_velocity()\nsensors_in_fault()\nsensors_apply_calibration()"| sensors
-    main -->|"engine_enable_thruster()\nengine_set_throttle()\nengine_fault_critical()\nengine_reset()"| engine
-    main -->|"nav_burn_rate()\nnav_hours_to_dest()\nnav_approach_safe()"| navigation
+    main -->|calls| record
+    record -->|writes index slot| buffers
+    main -->|calls| query
+    query -->|passes array + length| helpers
+    helpers -->|reads via buf[i]| buffers
 ```
-
-### Pass-by-value is the default
-
-When you call any function in this codebase, C copies your argument into the function's parameter. `sensors_apply_calibration(fuel, 5)` gives the function its own copy of `fuel` to work with. The function can modify that copy freely — the caller's `fuel` variable is untouched after the call. This is not a limitation; it is the default behaviour everywhere in C, and it means functions cannot accidentally mutate caller state through their parameters. Phase 10 introduces the mechanism for when you genuinely need in-place modification: a pointer to the variable.
 
 ---
 
 ## ⏮️ What we built in the previous branch
 
-`phase-07_control-flow` gave Calypso a persistent runtime: a `while(1)` command loop with `break` to exit on quit and `goto` to jump to an emergency shutdown label on a critical fault. A `switch` on `current_phase` enforced valid mission-phase transitions with intentional fallthrough from `LAUNCH` into `CRUISE`. A `for` sensor scan used `continue` to skip faulted sensors; a `do-while` validated command input. The entire implementation — nearly 500 lines — lived in one `main.c` with one flat scope. The SOLUTION commit for this branch extends Phase 7 with the two additive challenges: a HIGH_WARN threshold check in the sensor scan (Challenge 3) and a thruster-state report in the emergency shutdown block (Challenge 5).
+`phase-08_functions` split the 490-line `main.c` monolith into four translation units: `sensors.c/sensors.h`, `engine.c/engine.h`, `navigation.c/navigation.h`, and a slimmed-down `main.c` orchestrator. `ENGINE_CTRL` and `ENGINE_STATUS` became `static` file-scope variables in `engine.c`, invisible to all other modules. Pass-by-value was demonstrated explicitly: `sensors_apply_calibration()` modified a local copy of its argument and returned the result; the caller's variable was unchanged. The SOLUTION commit at the top of this branch adds `sensors_read_pressure()` (Challenge 4) and `nav_fuel_efficiency()` (Challenge 5) to their respective modules.
 
 ---
 
 ## 🎯 What we're doing in this branch
 
-- Extract sensor operations into `sensors.c` and `sensors.h` — `sensors_read_fuel()`, `sensors_read_velocity()`, `sensors_in_fault()`, `sensors_apply_calibration()`; the `sensor_float_t` typedef moves to `sensors.h`
-- Extract engine control into `engine.c` and `engine.h` — `engine_enable_thruster()`, `engine_disable_thruster()`, `engine_set_throttle()`, `engine_read_throttle()`, `engine_get_ctrl()`, `engine_get_status()`, `engine_set_sensor_fault()`, `engine_set_temp_warning()`, `engine_set_critical_fault()`, `engine_clear_status()`, `engine_fault_critical()`, `engine_reset()`; `ENGINE_CTRL` and `ENGINE_STATUS` become `static` file-scope variables invisible to `main.c`
-- Extract navigation calculations into `navigation.c` and `navigation.h` — `nav_burn_rate()`, `nav_hours_to_dest()`, `nav_approach_safe()`
-- Demonstrate pass-by-value explicitly: `sensors_apply_calibration()` modifies a local copy of the argument; the caller's variable is unchanged after the call
-- Update `CMakeLists.txt` to compile all four source files together into the single executable
+- Declare `static uint16_t fuel_history[SENSOR_HISTORY_LEN]` and `static uint16_t velocity_history[SENSOR_HISTORY_LEN]` in `sensors.c` as file-scope circular buffers; use `SENSOR_HISTORY_LEN` as the single size constant throughout
+- Add `sensors_record_fuel()` and `sensors_record_velocity()` to fill each buffer slot by slot using a wrapping index
+- Use `sizeof(fuel_history) / sizeof(fuel_history[0])` in the record functions to show how element count is derived from byte size
+- Implement static helpers `compute_average(uint16_t *buf, int len)` and `detect_drift(uint16_t *buf, int len, uint16_t threshold)` — the array decays to a pointer at each call site; the helpers demonstrate that `buf[i]` and `*(buf + i)` are identical
+- Expose `sensors_compute_fuel_avg()` and `sensors_detect_fuel_drift()` as the public API — these call the helpers, passing the file-scope buffer and its length
+- Call the record and query functions from `main.c` in the sensor-scan command so each `s` command adds one reading and prints the running state
 
 ---
 
 ## 🧑🏻‍🏫 Learning goals
 
 ### Understand
-- **Explain** pass-by-value — how C copies each argument into the corresponding parameter, and why a function modifying its parameter cannot affect the caller's variable
-- **Explain** how a header file exposes function declarations across translation units — what the compiler sees when `main.c` calls `sensors_read_fuel()` defined in `sensors.c`
-- **Distinguish** between block scope and file scope — how each determines where a name is visible and how long the variable lives
-- **Describe** global variables, their risk in larger codebases, and why this phase replaces them with `static` file-scope variables and explicit parameter passing
-- **Distinguish** between a function that returns a value, a function that performs an action (`void`-returning), and a function that modifies caller state via a pointer (Phase 10 preview)
-- **Explain** name shadowing — what happens when a local variable shares a name with a file-scope variable, and which declaration is visible at a given point
-- **Recognise** that C does not support function overloading — each function must have a unique name regardless of its parameter types
+- **Explain** what an array is — how elements of the same type are stored contiguously in memory at predictable, fixed-size offsets from the first element
+- **Explain** why array indexing starts at 0 and why accessing an index outside the declared bounds is undefined behaviour
+- **Explain** why C performs no bounds checking and why this makes out-of-bounds access dangerous — no runtime error, no warning, any result is possible
 
 ### Apply
-- **Define** functions with appropriate return types and parameter lists in `sensors.c`, `engine.c`, and `navigation.c`
-- **Write** function prototypes in header files to expose declarations to `main.c`
-- **Call** functions from `main.c` that are defined in separate translation units, and explain how the linker connects the call site to the definition
+- **Declare** fixed-size arrays in `sensors.c` using the `SENSOR_HISTORY_LEN` constant and access elements using zero-based index notation
+- **Use** `sizeof(array) / sizeof(array[0])` to derive element count from the array's byte size
+- **Pass** the sensor history buffer to `compute_average()` and `detect_drift()` and explain what the function actually receives
 
 ### Analyze
-- **Examine** `static uint32_t ENGINE_CTRL` in `engine.c` and explain what `static` prevents compared to the Phase 7 global declaration
-- **Compare** the Phase 7 monolith and the Phase 8 module split — identify two specific interactions between concerns that become impossible by design in Phase 8
+- **Demonstrate** that `buf[i]` and `*(buf + i)` produce the same value — and explain what that equivalence reveals about how array indexing works in memory
+- **Examine** what happens to `sizeof` information when an array is passed to a function — and why `sizeof(buf)` inside the function gives the pointer size, not the array size
 
 ---
 
@@ -161,125 +163,54 @@ When you call any function in this codebase, C copies your argument into the fun
 
 | Concept | Plain English |
 |---|---|
-| **Function prototype** | A declaration that tells the compiler a function's name, return type, and parameter types — without the body. Placed in a header so that any file including the header can call the function. |
-| **Translation unit** | One `.c` file and everything `#include`d into it. The compiler processes each translation unit independently and produces one object file. The linker combines the object files into the executable. |
-| **Pass-by-value** | When you call a function, C copies each argument into the corresponding parameter. The function works on its own copy; the caller's variable is unaffected. |
-| **File scope** | A variable declared outside any function is visible from its declaration to the end of that file. Adding `static` restricts visibility further — the variable cannot be accessed from any other translation unit. |
-| **Block scope** | A variable declared inside `{}` is only visible within those braces and is destroyed automatically when execution leaves them. |
-| **`void` function** | A function that performs an action and returns no value. `engine_set_throttle(10)` modifies the register and returns — there is nothing to assign the result to. |
-| **`static` at file scope** | Makes a variable or function private to its translation unit. `static uint32_t ENGINE_CTRL` in `engine.c` cannot be read or written by any other `.c` file. |
-| **Name shadowing** | When a local variable has the same name as an outer-scope variable, the local declaration hides the outer one within its block. The outer variable is unchanged; it simply cannot be named from inside the shadowing block. |
+| **Array** | A fixed-size block of same-type elements stored contiguously in memory, each addressable by a zero-based integer index. |
+| **Zero-based indexing** | The first element is at index 0, the last is at index `length - 1`. Indexing from 0 matches the way pointer arithmetic works: `array[i]` is `*(array + i)`. |
+| **Out-of-bounds access** | Reading or writing past the last valid index. C does not check at runtime; the program reads or writes whatever is at that memory address — silent data corruption, a crash, or a security vulnerability with no useful error message. |
+| **`sizeof` on an array** | Returns the total byte size of the array — element size multiplied by element count. Dividing by `sizeof(array[0])` recovers the count without repeating the magic number. |
+| **Array decay** | When an array name appears in an expression — including as a function argument — C converts it to a pointer to its first element. The function receives an address, not a copy of the data. |
+| **`array[i]` ≡ `*(array + i)`** | Array subscripting is defined as pointer arithmetic plus dereference. The compiler generates identical machine code for both forms. |
+| **`SENSOR_HISTORY_LEN`** | A preprocessor constant (`#define`) that controls buffer size in one place. Every array declaration, loop bound, and element-count expression references it. Phase 15 covers `#define` in full. |
 
 ---
 
 ## 🔍 What to notice in the code
 
-**[`sensors.h`](sensors.h)**
-The `sensor_float_t` typedef moves here from `main.c`. Every file that needs the type includes `sensors.h` — one definition, one place. The four function prototypes are declarations only: they tell the compiler the signature without revealing how the function works. `sensors_apply_calibration()` carries a multi-line comment explaining the pass-by-value contract; that comment is the learning moment for callers.
-
-**[`sensors.c`](sensors.c)**
-The `// NOTE:` comment on `sensors_apply_calibration()` (line 22) marks exactly where the copy semantics are visible — `reading += offset` increments the local parameter, not the caller's variable. The function then returns the modified copy. A reader unfamiliar with pass-by-value should stop here.
-
-**[`engine.c`](engine.c)**
-`static uint32_t ENGINE_CTRL = 0u` and `static uint32_t ENGINE_STATUS = 0u` (lines 20–21) are the key change from Phase 7. These are the same variables that lived as plain globals in `main.c`; `static` at file scope restricts their visibility to the functions in this file. `main.c` cannot name them — the compiler enforces the boundary. The bit-position constants (`THROTTLE_SHIFT`, `CRITICAL_FAULT_BIT`, etc.) are also `static` and private. Callers never need to know the register layout; they call `engine_set_critical_fault()` and let the module do the bit work.
-
-**[`engine.h`](engine.h)**
-Compare `engine.h` to `engine.c`: the header has twelve function prototypes and no data. The registers, the bit positions, the shift constants — none of it is visible here. This is the module's public contract: what it offers, nothing more.
-
-**[`navigation.c`](navigation.c)**
-Each function is one expression: a calculation, a comparison, a return. The `// NOTE:` on `nav_hours_to_dest()` (line 9) points back to the Phase 5 parenthesisation explanation — the logic didn't change, it moved into a named function. Phase 8 adds no new arithmetic; it gives the arithmetic a name.
-
-**[`main.c:60–62`](main.c#L60)**
-The pass-by-value demonstration. `fuel` is printed before and after the call to `sensors_apply_calibration(fuel, 5)` — the value is identical. The returned copy (`fuel_calibrated`) has the offset applied. These two lines prove that the function received a copy, not the original.
-
-**[`main.c:68–76`](main.c#L68)**
-Navigation section: three function calls replace the three inline calculations from Phase 5. `nav_burn_rate()`, `nav_hours_to_dest()`, and `nav_approach_safe()` take the same arguments and produce the same values — the refactoring added a name and a boundary, not a new computation.
-
-**[`main.c:80–104`](main.c#L80)**
-Engine control section: every register write is now a named function call. Compare `engine_enable_thruster(0)` here to `ENGINE_CTRL |= ((uint32_t)1u << THRUSTER_0_BIT)` in Phase 7 — the intent is the same, the mechanism is hidden. `main.c` never names a bit position.
+*Placeholders — completed after code is written.*
 
 ---
 
 ## ▶️ Running this branch
 
-**Prerequisites:** GCC or Clang (C99+) and CMake 3.10+, or just GCC/Clang on its own.
-
-**With CMake (recommended):**
-```bash
-cmake -B build
-cmake --build build
-.\build\Debug\calypso.exe   # Windows (MSVC)
-.\build\calypso.exe         # Windows (MinGW)
-./build/calypso             # Linux / macOS
-```
-
-**Direct compilation (no CMake):**
-```bash
-gcc -std=c99 main.c sensors.c engine.c navigation.c -o calypso
-./calypso
-```
-
-The program prints the boot banner, sensor reads (with the pass-by-value demonstration), navigation results, and an engine control register demo, then enters the command loop. Commands:
-
-| Command | Action |
-|---|---|
-| `n` | Advance the mission phase (`PREFLIGHT → LAUNCH → CRUISE → APPROACH → DOCKED`) |
-| `s` | Run the periodic sensor scan — sensor 1 (velocity) is faulted; sensor 2 triggers HIGH_WARN and calls `engine_set_temp_warning()` |
-| `e` | Trigger the emergency shutdown via `goto` |
-| `q` | Normal quit via `break` |
-
-**Expected output — pass-by-value demonstration:**
-```
-Fuel (original)      : 950 kg  (unchanged after sensors_apply_calibration)
-Fuel (calibrated)    : 955 kg  (copy returned by the function)
-```
-
-**Expected output — LAUNCH → CRUISE phase advance (intentional fallthrough):**
-```
-[LAUNCH] Command (n/s/e/q): n
-  Launch: ignition sequence active
-  Active burn: throttle=10 | fuel=950 kg | STATUS=0x00000000
-  >> Phase advanced to CRUISE
-```
-
-**Expected output — sensor scan (HIGH_WARN path):**
-```
-[PREFLIGHT] Command (n/s/e/q): s
---- Periodic Sensor Scan ---
-  Sensor 0:  101.325  [NOMINAL]
-  Sensor 1: FAULTED -- skipping
-  Sensor 2: WARNING -- reading 3200.000 exceeds HIGH_WARN threshold
-ENGINE_STATUS          : 0x00000002
-```
+*Placeholders — completed after code is written.*
 
 ---
 
 ## ✏️ Challenges for students
 
 **Challenge 1 — Analytical**
-`sensors_apply_calibration()` increments its `reading` parameter inside the function body, but the caller's variable is unchanged after the call. Confirm this by reading the function definition in `sensors.c` and the calling code in `main.c`. Then explain: what exactly does C copy when you call the function? Why is there no path back to the original variable?
+`detect_drift()` receives `uint16_t *buf` and `int len`. Inside the function, `sizeof(buf)` gives 8 on a 64-bit platform — not `SENSOR_HISTORY_LEN * sizeof(uint16_t)`. Explain why. What information is lost when an array is passed to a function, and what must the caller pass explicitly to compensate?
 
 **Challenge 2 — Analytical**
-`ENGINE_CTRL` is declared `static uint32_t ENGINE_CTRL` at file scope in `engine.c`. What does `static` do here — which parts of the codebase can see and modify this variable? If you removed `static` and instead declared `extern uint32_t ENGINE_CTRL` in `engine.h`, what would change? Name two specific bugs from Phase 7 that the `static` declaration makes impossible in Phase 8.
+`buf[i]` and `*(buf + i)` produce the same machine code. Explain what the equivalence reveals: what unit does pointer addition operate in, and how does the compiler know the step size for each increment?
 
 **Challenge 3 — Analytical**
-C does not support function overloading. Look at `sensors_read_fuel()` and `sensors_read_velocity()`. If you wanted a third sensor function that read pressure in PSI rather than kPa, how would you name it to follow the convention used in this codebase? How does the C standard library solve the same naming problem — for example, across the `printf` family?
+`fuel_history` is declared `uint16_t fuel_history[SENSOR_HISTORY_LEN]` at file scope in `sensors.c`. What happens if the loop that fills it writes to index `SENSOR_HISTORY_LEN` — one past the last valid slot? Why doesn't C report an error, and what could the program do next?
 
 **Challenge 4 — Additive**
-Add a `sensors_read_pressure(void)` function to `sensors.c` and `sensors.h` that returns the cabin pressure value as a `sensor_float_t`. Write its prototype in `sensors.h`. Call it from `main.c` in the boot banner to display cabin pressure, replacing the inline literal `101.325f`. The function should return `101.325f`.
+Add a `static uint16_t pressure_history[SENSOR_HISTORY_LEN]` buffer to `sensors.c`, alongside `sensors_record_pressure(uint16_t reading)` and `sensors_compute_pressure_avg(void)` functions. Follow the same pattern as the fuel buffer. Add the prototypes to `sensors.h`. Call `sensors_record_pressure()` from `main.c` in the sensor-scan command and print the running pressure average alongside the fuel average.
 
 **Challenge 5 — Additive (stretch)**
-`navigation.c` already has `nav_hours_to_dest()` for time calculations. Add a `nav_fuel_efficiency(uint32_t distance_km, uint16_t fuel_kg)` function to `navigation.c` and `navigation.h` that returns fuel efficiency as a `sensor_float_t` (km per kg) using floating-point division. Call it from `main.c` with `distance_to_dest_km` and `fuel`, print the result, and verify the value is correct.
+Modify `sensors_detect_fuel_drift()` so that instead of returning `bool`, it returns the index of the first reading that deviates from the mean by more than the threshold, or `-1` if no such reading exists. Update the return type to `int` in both `sensors.h` and `sensors.c`. Update the call site in `main.c` to print the index when drift is detected rather than a boolean flag.
 
 ---
 
 ## 💭 Thought pieces for the next branch
 
-1. `sensors_read_fuel()` returns one current value — a snapshot. To detect an anomaly we need the last 10 readings. A single return value cannot give us that. What data structure holds a sequence of values in C?
-2. We pass sensor values into functions by value. What if a function needed to update a sensor reading in-place — for calibration? A copy will not work. What would we need to pass instead?
-3. How much memory does one `uint16_t` sensor reading take? How much for 20 of them? How does C pass that sequence to a function without copying all 20 values?
+1. We pass the sensor buffer into `compute_average()` and it can read the buffer just fine. What if it needed to reset the buffer — write zeros into every slot? It only received a pointer to the first element. Can it write back through that pointer?
+2. `array[i]` and `*(array + i)` produce the same result. What does that tell us about how array indexing actually works in memory — what is the compiler computing when it locates element `i`?
+3. The calibration function receives a sensor reading and computes a correction — but it operates on a copy. After it returns, the original is unchanged. How do we fix that?
 
 ---
 
-*Previous branch: [`phase-07_control-flow`]*
-*Next branch: [`phase-09_arrays`]*
+*Previous branch: [`phase-08_functions`]*
+*Next branch: [`phase-10_pointers`]*
