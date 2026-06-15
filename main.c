@@ -228,6 +228,7 @@ int main(void) {
 
             /* record current readings into the circular history buffers */
             sensors_record_fuel(fuel);
+            // NOTE: float-to-integer cast truncates toward zero (32.7f → 32); precision loss is intentional
             sensors_record_velocity((uint16_t)velocity);
 
             sensor_float_t fuel_avg  = sensors_compute_fuel_avg();
