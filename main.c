@@ -2,10 +2,12 @@
 #include <stdint.h>
 #include <inttypes.h>
 #include <stdbool.h>
+#include <string.h>
 
 #include "sensors.h"
 #include "engine.h"
 #include "navigation.h"
+#include "crew.h"
 
 enum MissionPhase {
     PREFLIGHT,  /* 0 -- pre-launch checks */
@@ -24,6 +26,27 @@ int main(void) {
     printf("=========================================\n\n");
 
     printf("Calypso online. Initialising sensor suite.\n\n");
+
+    /* --- String literal vs mutable char array ----------------------------- */
+    /*
+     * "CALYPSO-7" is a string literal: the compiler places these 10 bytes
+     * (9 chars + '\0') in a read-only data segment. mission_label holds a
+     * pointer to that read-only region. Writing through mission_label --
+     * e.g. mission_label[0] = 'X' -- is undefined behaviour (segfault on
+     * most systems because the memory page is mapped read-only).
+     */
+    const char *mission_label = "CALYPSO-7";
+
+    /*
+     * char[] initialises from the literal but copies the bytes onto the stack.
+     * mission_id is an ordinary writable array -- mission_id[8] = '8' is safe.
+     * strlen("CALYPSO-7") == 9; sizeof(mission_id) == 10 (includes '\0').
+     */
+    char mission_id[] = "CALYPSO-7";
+    mission_id[8] = '8'; /* safely modifies the stack copy -- now "CALYPSO-8" */
+
+    printf("Mission label (literal) : %s  (read-only; cannot be modified)\n", mission_label);
+    printf("Mission ID (mutable)    : %s  (stack copy; safely modified)\n\n", mission_id);
 
     /* --- Mission parameters ------------------------------------------- */
 
@@ -140,13 +163,38 @@ int main(void) {
 
     engine_clear_status(); /* reset STATUS before entering the command loop */
 
+    /* --- Crew manifest ------------------------------------------------- */
+
+    crew_init();
+    crew_set_name(0, "CHEN");    crew_set_id(0, 101);
+    crew_set_name(1, "VASQUEZ"); crew_set_id(1, 102);
+    crew_set_name(2, "PARK");    crew_set_id(2, 103);
+
+    printf("--- Crew Identification ---\n");
+
+    /*
+     * strncat(dest, src, n): appends at most n bytes of src to dest, then
+     * writes '\0'. The bound is sizeof(comms_buf) - strlen(comms_buf) - 1:
+     * remaining capacity minus one byte reserved for the null terminator.
+     * Without the bound, strncat would be as unsafe as strcat.
+     */
+    char comms_buf[48] = "COMMS: ";
+    strncat(comms_buf, crew_get_name(0), sizeof(comms_buf) - strlen(comms_buf) - 1);
+    printf("Comms transmission      : %s\n", comms_buf);
+
+    /* crew_find_by_name uses strcmp -- compares byte sequences, not addresses */
+    int found = crew_find_by_name("PARK");
+    printf("Lookup 'PARK'           : slot %d\n", found);
+    found = crew_find_by_name("UNKNOWN_CREW");
+    printf("Lookup 'UNKNOWN_CREW'   : slot %d (not found)\n\n", found);
+
     /* --- Command loop -------------------------------------------------- */
 
     enum MissionPhase current_phase = PREFLIGHT;
 
     printf("=========================================\n");
     printf("  CALYPSO COMMAND LOOP ACTIVE\n");
-    printf("  n=advance phase  s=sensor scan  e=emergency  q=quit\n");
+    printf("  n=advance phase  s=sensor scan  m=manifest  e=emergency  q=quit\n");
     printf("=========================================\n\n");
 
     while (1) {
@@ -161,12 +209,12 @@ int main(void) {
         // NOTE: '\0' guards against UB if scanf returns EOF without writing to cmd
         char cmd = '\0';
         do {
-            printf("[%s] Command (n/s/e/q): ", phase_name);
+            printf("[%s] Command (n/s/m/e/q): ", phase_name);
             scanf(" %c", &cmd);
-            if (cmd != 'n' && cmd != 's' && cmd != 'e' && cmd != 'q') {
+            if (cmd != 'n' && cmd != 's' && cmd != 'm' && cmd != 'e' && cmd != 'q') {
                 printf("Unknown command '%c'.\n", cmd);
             }
-        } while (cmd != 'n' && cmd != 's' && cmd != 'e' && cmd != 'q');
+        } while (cmd != 'n' && cmd != 's' && cmd != 'm' && cmd != 'e' && cmd != 'q');
 
         if (cmd == 'q') {
             printf("Shutdown command received.\n");
@@ -224,6 +272,17 @@ int main(void) {
             } else {
                 printf("\n");
             }
+        }
+
+        if (cmd == 'm') {
+            crew_print_manifest();
+
+            /* second strncat demo: build a multi-part comms line */
+            char manifest_line[64] = "TX[";
+            strncat(manifest_line, crew_get_name(0), sizeof(manifest_line) - strlen(manifest_line) - 1);
+            strncat(manifest_line, "]",               sizeof(manifest_line) - strlen(manifest_line) - 1);
+            printf("Comms line              : %s  (len=%zu)\n\n",
+                   manifest_line, strlen(manifest_line));
         }
 
         if (cmd == 's') {

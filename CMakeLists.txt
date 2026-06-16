@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 project(calypso C)
 set(CMAKE_C_STANDARD 99)
-add_executable(calypso main.c sensors.c engine.c navigation.c)
+add_executable(calypso main.c sensors.c engine.c navigation.c crew.c)
 
 # Suppress MSVC's deprecation warnings for standard C library functions
 # (scanf, printf, etc. are standard C99 — these warnings are MSVC-specific noise)
