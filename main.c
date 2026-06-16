@@ -169,6 +169,10 @@ int main(void) {
     crew_set_name(0, "CHEN");    crew_set_id(0, 101);
     crew_set_name(1, "VASQUEZ"); crew_set_id(1, 102);
     crew_set_name(2, "PARK");    crew_set_id(2, 103);
+    // SOLUTION (Challenge 4): assign distinct ranks to each crew member
+    crew_set_rank(0, RANK_COMMANDER);
+    crew_set_rank(1, RANK_PILOT);
+    crew_set_rank(2, RANK_ENGINEER);
 
     printf("--- Crew Identification ---\n");
 
@@ -276,6 +280,8 @@ int main(void) {
 
         if (cmd == 'm') {
             crew_print_manifest();
+            // SOLUTION (Challenge 5 stretch): transmit each crew name as a "TX: <name>" comms line
+            crew_transmit_names();
 
             /* second strncat demo: build a multi-part comms line */
             char manifest_line[64] = "TX[";

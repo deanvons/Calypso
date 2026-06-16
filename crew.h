@@ -32,6 +32,8 @@ void        crew_init(void);
  */
 void        crew_set_name(int idx, const char *src);
 void        crew_set_id(int idx, uint8_t id);
+// SOLUTION (Challenge 4): rank setter -- resolves the DELIBERATE marker in crew_init
+void        crew_set_rank(int idx, CrewRank rank);
 
 /* --- Queries ------------------------------------------------------------- */
 
@@ -48,3 +50,5 @@ const char *crew_get_name(int idx);
 int         crew_find_by_name(const char *name);
 void        crew_print_manifest(void);
 int         crew_count(void);
+// SOLUTION (Challenge 5 stretch): builds a "TX: <name>" comms line per slot using strncat
+void        crew_transmit_names(void);

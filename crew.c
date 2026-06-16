@@ -38,7 +38,7 @@ void crew_init(void) {
          */
         strncpy(names[i], "UNKNOWN", MAX_NAME_LEN - 1);
         names[i][MAX_NAME_LEN - 1] = '\0';
-        ranks[i] = RANK_ENGINEER; /* DELIBERATE: no rank setter exists yet -- crew_set_rank() is Challenge 4 */
+        ranks[i] = RANK_ENGINEER; /* default; caller overrides with crew_set_rank() */
         ids[i]   = 0;
     }
     loaded = 0;
@@ -60,6 +60,12 @@ void crew_set_name(int idx, const char *src) {
 void crew_set_id(int idx, uint8_t id) {
     if (idx < 0 || idx >= MAX_CREW) return;
     ids[idx] = id;
+}
+
+// SOLUTION (Challenge 4):
+void crew_set_rank(int idx, CrewRank rank) {
+    if (idx < 0 || idx >= MAX_CREW) return;
+    ranks[idx] = rank;
 }
 
 const char *crew_get_name(int idx) {
@@ -95,4 +101,13 @@ void crew_print_manifest(void) {
 
 int crew_count(void) {
     return loaded;
+}
+
+/* SOLUTION (Challenge 5 stretch): */
+void crew_transmit_names(void) {
+    for (int i = 0; i < loaded; i++) {
+        char tx_line[48] = "TX: ";
+        strncat(tx_line, names[i], sizeof(tx_line) - strlen(tx_line) - 1);
+        printf("  %s  (payload=%zu bytes)\n", tx_line, strlen(names[i]));
+    }
 }
