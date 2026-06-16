@@ -143,7 +143,7 @@ flowchart LR
 
 - Add `sensors_calibrate(uint16_t *reading, uint16_t offset)` in `sensors.c` — takes the address of a sensor reading and applies an offset in place using the dereference operator; demonstrate alongside `sensors_apply_calibration()` in `main.c` to show the pass-by-value vs pass-by-pointer contrast
 - Update `compute_average` to use `const uint16_t *buf` — the `const` qualifier prevents writes through the parameter; update `detect_drift` to iterate using a pointer variable (`ptr++`) rather than index arithmetic
-- Add `static uint32_t * const pENGINE_CTRL = &ENGINE_CTRL` in `engine.c` — a fixed pointer to the simulated control register; use it in `engine_enable_thruster()` and `engine_disable_thruster()` to demonstrate `T * const`
+- Add `static uint32_t * const pENGINE_CTRL = &ENGINE_CTRL` in `engine.c` — a fixed pointer to the simulated control register; route all ENGINE_CTRL reads and writes through `*pENGINE_CTRL` across all six engine functions to demonstrate `T * const`
 - Add `sensors_configure_channel(uint16_t **channel, uint16_t *new_buf)` in `sensors.c` — takes a pointer-to-pointer and redirects the caller's pointer to a different history buffer; demonstrate from `main.c` with `&primary_channel`
 - Add DELIBERATE-commented examples in `main.c` showing null, uninitialised, and dangling pointer pitfalls — not executed, but visible at the point where the concepts are introduced
 
@@ -200,7 +200,7 @@ flowchart LR
 `sensors_configure_channel` demonstrates `**`. The parameter is `uint16_t **channel` — a pointer to a `uint16_t *`. `*channel = new_buf` writes a new address into the caller's pointer variable, redirecting it to a different history buffer. Without the extra level of indirection, the function would only receive a copy of the pointer and `primary_channel` in `main.c` would be unchanged after the call.
 
 **[`engine.c:29`](engine.c#L29)**
-`static uint32_t * const pENGINE_CTRL = &ENGINE_CTRL` — a const pointer to the engine control register. The pointer is initialised at definition and cannot be reseated; `*pENGINE_CTRL` always addresses `ENGINE_CTRL`. All engine functions that read or write `ENGINE_CTRL` do so via `*pENGINE_CTRL` (see lines 44–62). On real embedded hardware this would be `volatile uint32_t * const` pointing to a fixed memory address — the `volatile` qualifier is added in Phase 14.
+`static uint32_t * const pENGINE_CTRL = &ENGINE_CTRL` — a const pointer to the engine control register. The pointer is initialised at definition and cannot be reseated; `*pENGINE_CTRL` always addresses `ENGINE_CTRL`. All engine functions that read or write `ENGINE_CTRL` do so via `*pENGINE_CTRL` — see lines 44–62 for the main thruster and throttle functions, and line 90 for `engine_reset`. On real embedded hardware this would be `volatile uint32_t * const` pointing to a fixed memory address — the `volatile` qualifier is added in Phase 14.
 
 **[`main.c:64–88`](main.c#L64)**
 Two block comments side by side tell the full pointer story. The first is a `DELIBERATE` block showing what NOT to do: an uninitialised pointer with a garbage address, a null pointer dereference, and a dangling pointer after a local variable leaves scope — none of these are executed, but they are visible at the exact point in the code where pointers are first used. The second comment explains `sensors_calibrate(&fuel_cal, 5)` on [line 87](main.c#L87): `&fuel_cal` takes the address of the local, `*reading` inside the function follows it and applies the offset.
