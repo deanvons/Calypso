@@ -1,14 +1,14 @@
-# Phase README — Low-level sensor access
+# Phase README — Crew names and communications
 
-> **Phase 10 — Pointers** | Calypso · Core C
+> **Phase 11 — Strings** | Calypso · Core C
 
-Pointer variables, in-place calibration, and pointer arithmetic over the sensor history buffer — introducing the address-of operator, dereference, `const T*` vs `T* const`, and a pointer-to-pointer for sensor channel reconfiguration.
+Null-terminated character arrays, safe copy with `strncpy`, name lookup with `strcmp`, and transmission length validation with `strlen` — introducing C string handling and the mutable-array vs read-only-literal distinction.
 
-`sensors_apply_calibration()` in the previous phase took a fuel reading by value, computed a corrected copy, and handed it back. That works for one variable — but it cannot modify the caller's storage directly. If you want to apply a correction to every slot in the fuel history buffer, passing by value and returning copies is the wrong tool. To modify a caller's variable from inside a function, you need its address.
+The comms log has been printing `"UNKNOWN"` for every crew member since Phase 8. We had fixed-width integer types, floating-point velocity, a mission phase enum, and pointer-based calibration — but no mechanism to store text. The root problem is that C has no native string type. Text is a sequence of `char` values in a contiguous array with a null byte (`'\0'`) at the end marking where the string stops. Everything else — assignment, comparison, and length measurement — requires explicit library functions from `string.h`.
 
-A pointer is a variable that holds a memory address. `uint16_t *reading` is a variable that holds the address of a `uint16_t`. The address-of operator `&` produces that address; the dereference operator `*` follows it back to the value. `sensors_calibrate(&fuel, 5)` passes the address of `fuel`, and `*reading += 5` writes through that address directly into the caller's variable. The original changes, not a copy.
+This phase adds a crew management module with `char name[MAX_NAME_LEN]` arrays for each roster slot. `strncpy` copies a name safely into a fixed-size buffer. `strcmp` compares two names character by character rather than comparing addresses. `strlen` counts characters up to the null terminator for transmission length validation. Alongside the mutable crew name arrays, the shuttle designation is stored as a string literal — a read-only sequence the compiler places in non-writable memory. Attempting to write through a literal pointer is undefined behaviour.
 
-> **A note on scope.** Dynamic memory — `malloc`, `free`, and heap-allocated arrays — is Phase 13 material. This phase works entirely with pointers to stack and file-scope variables: addresses of things that already exist. Null and uninitialised pointer pitfalls are shown as DELIBERATE-marked examples, not as runnable code.
+> **A note on scope.** Dynamic string allocation (`malloc` for variable-length buffers) is Phase 13. Formatted string building with `sprintf` and `sscanf` is covered in Phase 15 alongside the preprocessor. This phase works with fixed-size `char` arrays and the four `string.h` functions every C programmer uses daily.
 
 ---
 
@@ -43,8 +43,8 @@ A pointer is a variable that holds a memory address. `uint16_t *reading` is a va
 | `phase-07_control-flow` | `while(1)` command loop · `switch` state machine · `goto` emergency shutdown | — |
 | `phase-08_functions` | `sensors.c` / `engine.c` / `navigation.c` split · prototypes · pass-by-value | Modular |
 | `phase-09_arrays` | Sensor history buffers · `sizeof` element count · `array[i]` ≡ `*(array + i)` | — |
-| `📌 phase-10_pointers` | **`&` / `*` · in-place calibration · pointer arithmetic · `const T*` vs `T* const` · `**`** | — |
-| `phase-11_strings` | `char` arrays · `strncpy` / `strcmp` / `strlen` · null terminator | — |
+| `phase-10_pointers` | `&` / `*` · in-place calibration · pointer arithmetic · `const T*` vs `T* const` · `**` | — |
+| `📌 phase-11_strings` | **`char` arrays · null terminator · `strncpy` / `strcmp` / `strlen` / `strncat` · literal vs mutable** | — |
 | `phase-12_structs` | `crew_member_t` · `spacecraft_t` · dot / arrow notation · nested structs | — |
 | `phase-13_dynamic-memory` | `malloc` / `realloc` / `free` · dynamic crew roster · `NULL` checks | — |
 | `phase-14_embedded-patterns` | `volatile` · memory-mapped I/O pointer · struct bitfields · `const` ROM data | Hardware abstraction |
@@ -66,105 +66,102 @@ git log --oneline          # find the SOLUTION commit hash
 git show <hash>            # inspect the solution in isolation
 ```
 
-### Challenge 1 — Why `sizeof(buf)` gives pointer size inside `detect_drift()`
+### Challenge 1 — Pointer arithmetic step size after `ptr++`
 
-When `fuel_history` is passed to `detect_drift()`, the array name decays to a pointer to its first element at the call site. Inside the function, `buf` is a `uint16_t *` — a pointer variable that holds an 8-byte address on a 64-bit platform. `sizeof(buf)` measures that pointer variable, not the array it addresses. The array's total size is lost the moment it decays; that is exactly why `len` must be passed as a separate argument. The compiler has no way to recover the original array size from a pointer alone.
+After `uint16_t *ptr = fuel_history; ptr++;`, `ptr` holds the address of the second element — not `fuel_history + 1` byte, but `fuel_history + sizeof(uint16_t)` bytes (2 bytes on every platform, because `uint16_t` is always 2 bytes). Pointer arithmetic operates in units of the pointed-to type's size. The compiler determines the step size from the declared type at compile time: `uint16_t *` means each `++` advances by 2 bytes; `uint32_t *` would advance by 4. This is what makes `ptr++` a reliable way to walk any typed array without manually computing byte offsets.
 
-### Challenge 2 — What `buf[i]` ≡ `*(buf + i)` reveals about pointer arithmetic
+### Challenge 2 — Uninitialised pointer vs null pointer
 
-Pointer addition does not operate in bytes — it operates in units of the pointed-to type's size. When `buf` is `uint16_t *` and you write `buf + i`, the compiler multiplies `i` by `sizeof(uint16_t)` (2 bytes) to produce the byte offset from the base address. `buf[i]` is exactly `*(buf + i)` by definition — the subscript operator is syntactic sugar for pointer arithmetic plus dereference. The step size is implicit in the type and determined by the compiler at compile time.
+A null pointer holds `NULL` (address 0), which is a known-invalid sentinel. You can test for it before dereferencing: `if (ptr != NULL)`. A runtime crash on `NULL` dereference is immediate and at the exact dereference site — easy to diagnose. An uninitialised pointer holds whatever bytes happened to be in that stack slot — a garbage address that looks valid to the runtime. The crash (if any) happens later, at an unrelated point, because the garbage address may land in a readable memory region. You cannot distinguish an uninitialised pointer from a valid one by testing its value; the only defence is always initialising: `uint16_t *p = NULL`.
 
-### Challenge 3 — Out-of-bounds write to index `SENSOR_HISTORY_LEN`
+### Challenge 3 — `const uint16_t *buf` vs `uint16_t * const ptr`
 
-C does not check. Writing to `fuel_history[SENSOR_HISTORY_LEN]` addresses the memory immediately past the last valid element — whatever happens to be there. On the stack it might overwrite a local variable, the saved frame pointer, or a return address. At file scope it might corrupt an adjacent variable. The program continues without an error message; the consequence is a corrupted value somewhere, a crash at a later unrelated point, or a silent security vulnerability. Bounds discipline is entirely your responsibility.
+`const uint16_t *buf` constrains the data: you cannot write through `buf` inside the function (`*buf = 0` is a compile error), but you can reseat `buf` to point elsewhere. `uint16_t * const ptr` constrains the pointer itself: `ptr` cannot be reseated after initialisation, but the data it points to is fully mutable (`*ptr = 0` is fine). In the Calypso codebase, `compute_average` and `detect_drift` use `const uint16_t *buf` — they only read the history buffer, and `const` encodes that promise. `pENGINE_CTRL` in `engine.c` uses `uint32_t * const` — it always addresses `ENGINE_CTRL`, cannot be redirected, but the register value is intentionally mutable.
 
-### Thought piece 1 — Can `compute_average()` write back through the pointer it receives?
+### Thought piece 1 — How C represents strings in memory
 
-Yes — `buf` is `uint16_t *`, not `const uint16_t *`, so the function could write through it with `buf[i] = 0`. Whether it *should* is a design question: the name `compute_average` implies a read, not a write. Adding undeclared write behaviour to a reader makes the interface harder to reason about. The right answer is `const uint16_t *buf` in the parameter: it tells both the caller and the compiler that this function will only read through the pointer. Phase 10 adds that qualifier.
+A C string is a contiguous sequence of `char` values terminated by a null byte (`'\0'`, value 0). There is no dedicated string type — just the convention that the sequence ends at the first `'\0'`. `"CALYPSO"` in memory occupies 8 bytes: `C`, `A`, `L`, `Y`, `P`, `S`, `O`, `\0`. All standard library functions (`strlen`, `strcmp`, `strncpy`) rely on the null terminator to know where the string ends. If the terminator is absent — for example, because `strncpy` ran out of space — any function that reads past the array bounds has undefined behaviour.
 
-### Thought piece 2 — What `array[i]` ≡ `*(array + i)` tells us about memory layout
+### Thought piece 2 — Writing to a string literal
 
-Array subscripting is pointer arithmetic in disguise. `i` is scaled by the element size — `fuel_history + 3` does not add 3 bytes; it adds 3 × `sizeof(uint16_t)` = 6 bytes. The array name in an expression context is a pointer to element zero; every subsequent element is exactly `i × sizeof(element)` bytes further along. Elements are guaranteed contiguous in memory; that is what makes pointer arithmetic over a buffer predictable and what lets you traverse it with `ptr++` instead of `buf[i]`.
+`char *designation = "CALYPSO-7"` stores a pointer to a string literal. The compiler places the literal bytes in a read-only data segment (`.rodata` on Linux; a const section on Windows). Writing through `designation` — `designation[8] = 'X'` — is undefined behaviour: on most systems it causes a segmentation fault because the page is mapped read-only. To get a writable copy, declare `char designation[] = "CALYPSO-7"` — this copies the literal bytes onto the stack at initialisation time, producing a mutable local array. Both declarations look similar at the point of use; the difference is entirely in what the memory model allows.
 
-### Thought piece 3 — Fixing the calibration function that operates on a copy
+### Thought piece 3 — Why `==` cannot compare strings
 
-Pass a pointer to the variable instead of the variable itself. `sensors_calibrate(uint16_t *reading, uint16_t offset)` receives the address of the caller's variable; `*reading += offset` writes through that address directly into the caller's storage. At the call site: `sensors_calibrate(&fuel, 5)`. After the call, `fuel` holds the corrected value — no return value needed. Phase 10 builds exactly this.
+`==` on two `char *` variables compares the pointer values — the addresses — not the string contents. Two `char` arrays holding identical text at different memory locations compare unequal with `==`. The correct function is `strcmp(a, b)`, which walks both arrays byte by byte until it finds a difference or reaches the null terminator; it returns 0 only when the contents are identical. Using `==` on strings is a silent logic error: it does not produce a compile error, but it will almost always give the wrong result.
 
 ---
 
 ## 💡 Why we made this decision
 
-### From "return a copy" to "modify in place"
+### The comms log cannot name anyone
 
-`sensors_apply_calibration(uint16_t reading, uint16_t offset)` computed a corrected value from a copy and returned it. The caller had to capture the return value and decide what to do with it. If you wanted to calibrate all ten slots of the fuel history buffer — applying the same correction to each — you would need to loop, call the function ten times, and reassign each result. The function cannot reach into the caller's array because it was never given the locations, only the values.
+From Phase 8 onward, crew identification has been a `uint8_t id` — a number. The comms system prints `"UNKNOWN"` for every name because there is no type in the codebase that can hold text. The fundamental obstacle is that C has no string type. Text in C is a `char` array with a null byte at the end that marks where the string stops. Without a way to store that array, there are no crew names.
 
-The natural fix is to pass the address. `sensors_calibrate(uint16_t *reading, uint16_t offset)` receives a pointer — the memory address of the caller's variable. `*reading += offset` follows that address and writes the corrected value directly into the caller's storage. The function needs no return value because the side effect is the point.
+The natural representation is `char name[MAX_NAME_LEN]`: a fixed-size array with room for up to `MAX_NAME_LEN - 1` printable characters plus the null terminator. This is the standard C idiom for fixed-length names in a flat-memory system. The crew module declares three parallel arrays — `names[MAX_CREW][MAX_NAME_LEN]`, `ranks[MAX_CREW]`, and `ids[MAX_CREW]` — with index `i` in each referring to the same crew member by convention.
 
-This is the fundamental distinction between pass-by-value and pass-by-pointer in C. Neither is universally better: pass-by-value keeps the caller's variable safe (the callee cannot accidentally corrupt it), while pass-by-pointer is necessary when a function must write back to the caller.
+### Why `strncpy` and not `=`
 
-### `const` as intent expressed in the type
+You cannot assign a string to a `char` array with `=`. `name = src` is a compile error: `name` decays to a pointer in expression context and cannot appear on the left side of an assignment. You have to copy character by character. `strncpy(dest, src, n)` does that copy for you, reading at most `n` bytes from `src`. The bound is the safety guarantee: if `src` is longer than your buffer, `strncpy` stops at `n` bytes and does not overflow. The catch is that when `src` is longer than `n`, `strncpy` fills to `n` bytes but leaves `dest` *without* a null terminator. You must add `dest[n-1] = '\0'` explicitly after every `strncpy` call. The unbounded `strcpy` has no cap at all — it copies until it finds `'\0'` in `src` regardless of how much space `dest` has — which is why it is unsafe on any input you do not fully control.
 
-Two functions in this phase take pointer parameters with different intentions:
+### Why `strcmp` and not `==`
 
-- `compute_average(const uint16_t *buf, int len)` — reads through `buf` but must not write. `const` encodes that promise; the compiler will reject any attempt to write through `buf` inside the function.
-- `sensors_calibrate(uint16_t *reading, uint16_t offset)` — must write through `reading`. No `const`.
+`==` on two `char *` values compares the addresses stored in the pointers, not the character sequences they point to. Two arrays holding `"CHEN"` at different addresses compare unequal with `==`. `strcmp(a, b)` walks both arrays byte by byte until it finds a difference or reaches `'\0'` in both simultaneously. It returns 0 only when the contents are identical. Using `==` on strings is a silent error: the compiler accepts it without warning because it is valid pointer comparison — it just does not do what you intend.
 
-`uint32_t * const pENGINE_CTRL` in `engine.c` is a different kind of `const`: the pointer itself is constant. It always addresses `ENGINE_CTRL`; you cannot reseat it to point elsewhere. The value at that address can still be changed. On real embedded hardware, a control register lives at a fixed physical address for the life of the program — a `T * const` pointer models that directly.
-
-The two qualifiers answer two different questions:
-- `const T *` — is the data the pointer points to read-only?
-- `T * const` — is the pointer itself fixed (cannot be reseated)?
+### String literal vs mutable array
 
 ```mermaid
 flowchart LR
-    subgraph read_only["const uint16_t *buf"]
+    subgraph literal["const char *mission_label = \"CALYPSO-7\""]
         direction LR
-        A["pointer\n(can be reseated)"] -->|reads only| B["data\n(read-only via this pointer)"]
+        P["pointer (stack)"] --> RO["read-only data segment\n'C' 'A' 'L' 'Y' 'P' 'S' 'O' '-' '7' '\\0'"]
     end
-    subgraph fixed_ptr["uint32_t * const pENGINE_CTRL"]
+    subgraph array["char mission_id[] = \"CALYPSO-7\""]
         direction LR
-        C["pointer\n(fixed — always addresses ENGINE_CTRL)"] -->|can read and write| D["data\n(mutable)"]
+        Q["stack array (writable)\n'C' 'A' 'L' 'Y' 'P' 'S' 'O' '-' '7' '\\0'"]
     end
 ```
 
-### `**` for pointer indirection
-
-`sensors_configure_channel(uint16_t **channel, uint16_t *new_buf)` takes a pointer-to-pointer. The caller passes `&primary_channel` — the address of a `uint16_t *` variable. Inside the function, `*channel = new_buf` writes a new address into the caller's pointer variable, redirecting it to a different history buffer. Without `**`, the function would only receive a copy of the pointer value — the same limitation that forced us from pass-by-value to pass-by-pointer for scalar values now applies one level up.
+Both forms start from the same literal text. `const char *mission_label` stores a pointer to the compiler's copy in read-only memory — any write through it is undefined behaviour. `char mission_id[]` copies those bytes onto the stack at the point of declaration — it is an ordinary writable array. The two look similar at the point of declaration; only the memory model differs. This phase makes that difference concrete by showing both in `main.c` and modifying only the array.
 
 ---
 
 ## ⏮️ What we built in the previous branch
 
-`phase-09_arrays` added fixed-size circular history buffers for fuel and velocity: `static uint16_t fuel_history[SENSOR_HISTORY_LEN]` and `static uint16_t velocity_history[SENSOR_HISTORY_LEN]`, both file-scoped in `sensors.c`. A `for` loop fills each buffer slot by slot; `sensors_compute_fuel_avg()` and `sensors_detect_fuel_drift()` pass the array — which decays to a pointer at the call site — to static helper functions. The SOLUTION commit at the top of this branch adds a `pressure_history` buffer (Challenge 4) and changes `sensors_detect_fuel_drift()` to return the index of the first drifting reading rather than a boolean (Challenge 5).
+Phase 10 added pointer-based in-place calibration (`sensors_calibrate`), `const`-qualified read parameters across `compute_average` and `detect_drift`, a fixed register pointer (`static uint32_t * const pENGINE_CTRL`), and a pointer-to-pointer channel reconfiguration function (`sensors_configure_channel`). The SOLUTION commit at the top of this branch adds `sensors_calibrate_velocity` (Challenge 4) and `sensors_print_history_ptr` (Challenge 5 stretch) — both follow the same pointer patterns introduced in Phase 10.
 
 ---
 
 ## 🎯 What we're doing in this branch
 
-- Add `sensors_calibrate(uint16_t *reading, uint16_t offset)` in `sensors.c` — takes the address of a sensor reading and applies an offset in place using the dereference operator; demonstrate alongside `sensors_apply_calibration()` in `main.c` to show the pass-by-value vs pass-by-pointer contrast
-- Update `compute_average` to use `const uint16_t *buf` — the `const` qualifier prevents writes through the parameter; update `detect_drift` to iterate using a pointer variable (`ptr++`) rather than index arithmetic
-- Add `static uint32_t * const pENGINE_CTRL = &ENGINE_CTRL` in `engine.c` — a fixed pointer to the simulated control register; route all ENGINE_CTRL reads and writes through `*pENGINE_CTRL` across all six engine functions to demonstrate `T * const`
-- Add `sensors_configure_channel(uint16_t **channel, uint16_t *new_buf)` in `sensors.c` — takes a pointer-to-pointer and redirects the caller's pointer to a different history buffer; demonstrate from `main.c` with `&primary_channel`
-- Add DELIBERATE-commented examples in `main.c` showing null, uninitialised, and dangling pointer pitfalls — not executed, but visible at the point where the concepts are introduced
+- Add `crew.h` with `#define MAX_CREW 6` and `#define MAX_NAME_LEN 24`, a `CrewRank` enum, and the crew module API
+- Add `crew.c` with three parallel arrays: `static char names[MAX_CREW][MAX_NAME_LEN]`, `static CrewRank ranks[MAX_CREW]`, `static uint8_t ids[MAX_CREW]`
+- Implement `crew_init()` using `strncpy` to fill every name slot with `"UNKNOWN"`
+- Implement `crew_set_name(int idx, const char *src)` using `strncpy` plus explicit null termination to safely copy a name into the fixed-size slot
+- Implement `crew_find_by_name(const char *name)` using `strcmp` to walk the roster and return the index, or `-1` if not found
+- Implement `crew_print_manifest()` using `strlen` to report each name's character count alongside the roster entry
+- In `main.c`: show `const char *mission_label = "CALYPSO-7"` (literal, read-only) alongside `char mission_id[] = "CALYPSO-7"` (stack copy, writable) to contrast the two representations; demonstrate `strncat` for building a comms transmission buffer; call `crew_init()`, load a three-person roster, perform a name lookup, and add an `m` command to print the manifest
 
 ---
 
 ## 🧑🏻‍🏫 Learning goals
 
 ### Understand
-- **Explain** a pointer as a variable that holds a memory address — the difference between the pointer variable (which stores an address), the address it holds (a location in memory), and the value at that address (the data itself)
-- **Explain** the difference between a null pointer (`NULL` — a known-invalid address, detectable before dereference) and an uninitialised pointer (holds a garbage address, not detectable) — and why uninitialised is more dangerous
-- **Explain** why an array name decays to a pointer to its first element when used in an expression or passed to a function
-- **Explain** the difference between `const uint16_t *` (the pointed-to data is read-only; the pointer can be reseated) and `uint16_t * const` (the pointer is fixed; the data it points to is mutable)
-- **Identify** the three most dangerous pointer errors — dangling pointers, use-after-free, and uninitialised pointer dereference — and explain why each is difficult to detect at runtime
+- **Explain** how C represents a string as a null-terminated `char` array — why the `'\0'` sentinel exists and what happens when it is missing
+- **Explain** the difference between a mutable `char` array initialised from a literal and a `const char *` pointer to a string literal in read-only memory — and why writing through the literal pointer is undefined behaviour
+- **Explain** why `strcpy` and `strcat` are unsafe and how `strncpy` and `strncat` bound the operation — including the edge case where `strncpy` does not null-terminate
+- **Identify** the common sources of undefined behaviour in C string handling: missing null terminator, buffer overflow, and reading past allocated memory
 
 ### Apply
-- **Declare** pointer variables, use `&` to take an address, and `*` to dereference it — in `sensors_calibrate()` and its call site in `main.c`
-- **Apply** pointer arithmetic over the sensor history buffer in `detect_drift()` using a pointer variable that advances with `ptr++`
-- **Use** a `uint16_t **` parameter in `sensors_configure_channel()` to redirect a caller's pointer to a different history buffer
+- **Declare** and initialise strings using both `char array[]` syntax and string literal pointer syntax
+- **Use** `strncpy` to copy a name safely into a fixed-size `char` array with explicit null termination
+- **Use** `strcmp` to implement `crew_find_by_name()` — returning the roster index when contents match, `-1` otherwise
+- **Use** `strlen` in `crew_print_manifest()` to measure each name's character count for transmission length reporting
+- **Use** `strncat` to append a crew name to a comms transmission buffer, bounding the append to prevent overflow
+- **Pass** strings to and from functions as `const char *` parameters — in `crew_set_name()` which accepts a source name, and `crew_get_name()` which returns a pointer to the stored name
 
 ### Analyze
-- **Differentiate** `const uint16_t *buf` from `uint16_t * const ptr` — identify which constrains the pointer and which constrains the data; trace through which operations are permitted in each case
+- **Examine** why `==` on two `char *` values compares addresses rather than string contents, and trace what `crew_find_by_name()` would return if it used `==` instead of `strcmp`
 
 ---
 
@@ -172,126 +169,64 @@ flowchart LR
 
 | Concept | Plain English |
 |---|---|
-| **Pointer** | A variable that holds a memory address. `uint16_t *p` means `p` stores an address; `*p` follows that address to the `uint16_t` stored there. |
-| **Address-of operator (`&`)** | Produces the memory address of a variable. `&fuel` gives the address of the `fuel` variable — what you pass when a function needs to write back to the caller's storage. |
-| **Dereference operator (`*`)** | Follows a pointer to the value it addresses. `*reading += 5` reads the value at the address in `reading`, adds 5, and writes the result back to that same address. |
-| **Pointer arithmetic** | Advancing a pointer by one (`ptr++`) moves it by `sizeof(*ptr)` bytes — not 1 byte. For `uint16_t *`, each `++` moves 2 bytes, landing on the next element. |
-| **`const T *`** | Pointer to const data — the data pointed to cannot be modified through this pointer. The pointer itself can be reseated to point elsewhere. |
-| **`T * const`** | Const pointer — the pointer cannot be reseated; it always addresses the same location. The data it points to can be modified. |
-| **`T **`** | Pointer-to-pointer. `*pp` is the inner pointer; `**pp` is the value it ultimately points to. Pass `&ptr` to give a function the ability to change which address `ptr` holds. |
-| **Null pointer** | A pointer holding `NULL` (address 0) — a known-invalid address. Dereferencing causes a crash. Safe to test before use: `if (ptr != NULL)`. |
-| **Uninitialised pointer** | A pointer declared but never assigned — holds a garbage address. Dereferencing it is undefined behaviour; the crash may not occur at the dereference site. Always initialise: `uint16_t *p = NULL`. |
-| **Dangling pointer** | A pointer that once held a valid address but no longer does — the variable it pointed to went out of scope, or the allocated memory was freed. Reading or writing through it is undefined behaviour. |
+| **Null terminator (`'\0'`)** | A zero byte at the end of every C string. All `string.h` functions stop reading at this byte. Without it, they read past the array's end — undefined behaviour. |
+| **`char` array** | A fixed-size block of memory holding characters. `char name[24]` holds up to 23 printable characters plus the null terminator. |
+| **String literal** | Text in double quotes, e.g. `"CALYPSO-7"`. The compiler places these bytes in a read-only data segment. Assigning to `const char *` gives a pointer to that read-only memory. |
+| **Mutable `char` array** | `char name[] = "CALYPSO-7"` copies the literal bytes onto the stack at declaration time — a writable local array, independent of the literal. |
+| **`strncpy(dest, src, n)`** | Copies at most `n` bytes from `src` to `dest`. Does not guarantee null termination when `src` is longer than `n − 1`. Always add `dest[n-1] = '\0'` to close the array. |
+| **`strncat(dest, src, n)`** | Appends at most `n` bytes of `src` to `dest`, then writes a null terminator. The bound prevents overflow; always compute the remaining space as `sizeof(dest) - strlen(dest) - 1`. |
+| **`strcmp(a, b)`** | Compares two strings byte by byte. Returns 0 if equal, negative if `a` < `b` lexicographically, positive if `a` > `b`. Never use `==` to compare string contents. |
+| **`strlen(s)`** | Counts bytes from `s` up to but not including `'\0'`. Returns the number of printable characters — the null terminator is not counted. |
+| **Buffer overflow** | Writing more bytes than a `char` array was declared to hold. `strncpy` and `strncat` prevent it with an explicit length cap; `strcpy` and `strcat` do not. |
 
 ---
 
 ## 🔍 What to notice in the code
 
-**[`sensors.c:86–89`](sensors.c#L86)**
-`sensors_calibrate` is the simplest pointer function in the codebase: `*reading += offset` follows the address in `reading` and writes directly to the caller's variable. Compare [line 79](sensors.c#L79): `sensors_apply_calibration` takes `uint16_t reading` by value — there is no path back. `sensors_calibrate` takes `uint16_t *reading` — the caller passes `&fuel_cal` and the modification is visible after the call.
-
-**[`sensors.c:24–31`](sensors.c#L24)**
-`compute_average` now takes `const uint16_t *buf` — the `const` qualifier tells both the caller and the compiler that this function will only read through `buf`. Any attempt to write through it inside the function is a compile error. Compare `detect_drift` at [line 41](sensors.c#L41): also takes `const uint16_t *buf`, for the same reason.
-
-**[`sensors.c:41–54`](sensors.c#L41)**
-`detect_drift` iterates with a pointer variable instead of index arithmetic. `ptr = buf` initialises the pointer to the first element; `end = buf + len` sets a sentinel one past the last; `ptr++` advances by `sizeof(uint16_t)` bytes per step; `*ptr` dereferences the current element. This is equivalent to `buf[i]` — the compiler generates identical machine code — but makes the pointer arithmetic visible.
-
-**[`sensors.c:93–96`](sensors.c#L93)**
-`sensors_configure_channel` demonstrates `**`. The parameter is `uint16_t **channel` — a pointer to a `uint16_t *`. `*channel = new_buf` writes a new address into the caller's pointer variable, redirecting it to a different history buffer. Without the extra level of indirection, the function would only receive a copy of the pointer and `primary_channel` in `main.c` would be unchanged after the call.
-
-**[`engine.c:29`](engine.c#L29)**
-`static uint32_t * const pENGINE_CTRL = &ENGINE_CTRL` — a const pointer to the engine control register. The pointer is initialised at definition and cannot be reseated; `*pENGINE_CTRL` always addresses `ENGINE_CTRL`. All engine functions that read or write `ENGINE_CTRL` do so via `*pENGINE_CTRL` — see lines 44–62 for the main thruster and throttle functions, and line 90 for `engine_reset`. On real embedded hardware this would be `volatile uint32_t * const` pointing to a fixed memory address — the `volatile` qualifier is added in Phase 14.
-
-**[`main.c:64–88`](main.c#L64)**
-Two block comments side by side tell the full pointer story. The first is a `DELIBERATE` block showing what NOT to do: an uninitialised pointer with a garbage address, a null pointer dereference, and a dangling pointer after a local variable leaves scope — none of these are executed, but they are visible at the exact point in the code where pointers are first used. The second comment explains `sensors_calibrate(&fuel_cal, 5)` on [line 87](main.c#L87): `&fuel_cal` takes the address of the local, `*reading` inside the function follows it and applies the offset.
-
-**[`main.c:278–282`](main.c#L278)**
-The channel reconfiguration demo in the `s` command block. `primary_channel` starts as `NULL`; `sensors_configure_channel(&primary_channel, sensors_fuel_history_ptr())` redirects it to `fuel_history`; `sensors_compute_channel_avg(primary_channel)` reads the average via the `const uint16_t *` parameter. The second call to `sensors_configure_channel` redirects to `velocity_history`. Press `s` ten times and both averages stabilise as the buffers fill.
+*Completed after code is written.*
 
 ---
 
 ## 🔗 What this phase revealed
 
-With pointers come new obligations. `sensors_calibrate(uint16_t *reading, uint16_t offset)` can now modify the caller's variable — but nothing in the type system prevents a caller from passing a null or dangling pointer. Every function that accepts a pointer either trusts its callers to pass a valid address or checks `reading != NULL` before dereferencing.
+Crew data in this phase lives in three parallel arrays: `names[MAX_CREW][MAX_NAME_LEN]`, `ranks[MAX_CREW]`, and `ids[MAX_CREW]`. They form a crew member only by convention — index `i` in all three arrays refers to the same person. Adding a new field (say, a crew assignment) means a fourth array and updated initialisation, load, and print logic throughout `crew.c`. There is no type that enforces this relationship; nothing prevents the arrays from drifting out of sync.
 
-> **LEARNING MOMENT:** Pass-by-value was simpler to reason about — the callee had no path back to the caller's stack. Pointers add power and add responsibility in equal measure. The three dangerous pointer errors (uninitialised, dangling, null dereference) are all consequences of the same trade-off: C lets you address memory directly, and it will not stop you from addressing the wrong location.
+> **LEARNING MOMENT:** Parallel arrays are a structural smell. The coupling is entirely by index convention — the compiler cannot detect when one array is updated without the other. Phase 12 introduces `struct`, which bundles related fields into a single named type. One slot in a `crew_member_t` array contains everything about one person; index drift becomes impossible.
 
 ---
 
 ## ▶️ Running this branch
 
-**Prerequisites:** GCC or Clang (C99+) and CMake 3.10+, or just GCC/Clang on its own.
-
-**With CMake (recommended):**
-```bash
-cmake -B build
-cmake --build build
-.\build\Debug\calypso.exe   # Windows (MSVC)
-.\build\calypso.exe         # Windows (MinGW)
-./build/calypso             # Linux / macOS
-```
-
-**Direct compilation (no CMake):**
-```bash
-gcc -std=c99 main.c sensors.c engine.c navigation.c -o calypso
-./calypso
-```
-
-The boot sequence now prints three fuel lines — original, pass-by-value calibrated, and in-place calibrated — before the navigation output:
-
-```
-Fuel (original)      : 950 kg  (unchanged after sensors_apply_calibration)
-Fuel (calibrated)    : 955 kg  (copy returned by the function)
-Fuel (in-place, ptr) : 955 kg  (sensors_calibrate wrote through &fuel_cal)
-```
-
-The `s` command now shows the fuel and pressure averages, drift index, and channel reconfiguration output:
-
-| Command | Action |
-|---|---|
-| `n` | Advance mission phase |
-| `s` | Sensor scan — records fuel, velocity, and pressure into history; prints averages, drift index, and channel reconfiguration demo |
-| `e` | Emergency shutdown via `goto` |
-| `q` | Normal quit |
-
-**Expected output — first sensor scan:**
-```
-Fuel avg (history)     : 95.0 kg  |  drift at index: 0
-Pressure avg (history) : 10.1 kPa
-Channel -> fuel        : 95.0 kg avg
-Channel -> velocity    : 3.2 avg
-```
-
-The drift index is 0 on the first scan — the first reading (950 kg) deviates far from the zero-padded average (95.0). After ten presses all slots fill with real readings, the average stabilises, and drift index returns -1.
+*Completed after code is written.*
 
 ---
 
 ## ✏️ Challenges for students
 
 **Challenge 1 — Analytical**
-`uint16_t *ptr = fuel_history; ptr++;` — what address does `ptr` hold after the increment? What unit does pointer addition operate in, and how does the compiler determine the step size for each increment?
+`strncpy(dest, src, MAX_NAME_LEN)` does not always null-terminate `dest`. Under exactly what condition does it leave `dest` without a null terminator? Why is that dangerous for any function that later reads `dest` as a C string? How does `crew_set_name()` in this phase prevent that outcome?
 
 **Challenge 2 — Analytical**
-Why is an uninitialised pointer more dangerous than a null pointer? What is different about how you would detect each one before dereferencing it?
+What does `strcmp("COMMANDER", "commander")` return, and why? If you wanted `crew_find_by_name()` to match names regardless of case — so `"chen"` finds the slot holding `"CHEN"` — how would you approach that without changing the stored names? Name the standard library function you would need and describe the approach. (You do not need to implement it.)
 
 **Challenge 3 — Analytical**
-`const uint16_t *buf` and `uint16_t * const ptr` look similar but restrict different things. Name what each restricts, and give one example from the Calypso codebase where each is the right qualifier to use.
+`strlen("CALYPSO-7")` returns 9. How many bytes does `char mission_id[] = "CALYPSO-7"` occupy on the stack? Why is there a one-byte discrepancy, and why does `strlen` not include that extra byte in its count?
 
 **Challenge 4 — Additive**
-Add `sensors_calibrate_velocity(uint16_t *reading, uint16_t offset)` to `sensors.c` and `sensors.h`, following the same pattern as `sensors_calibrate()`. Call it from `main.c` on the result of `(uint16_t)velocity` before the sensor scan prints, and confirm the calibrated value appears in the output.
+Add `void crew_set_rank(int idx, CrewRank rank)` to `crew.c` and `crew.h`. Call it from `main.c` to assign a distinct rank to each of the three loaded crew members (`RANK_COMMANDER`, `RANK_PILOT`, `RANK_ENGINEER`). Confirm the ranks appear correctly in the manifest when you press `m`.
 
 **Challenge 5 — Additive (stretch)**
-Add `void sensors_print_history_ptr(const uint16_t *buf, int len)` to `sensors.c` and `sensors.h`. It should iterate over the buffer using a pointer variable (`ptr++`, not index notation) and print each element's value and memory address using `printf` and `%p`. Call it from `main.c` after the fuel average line in the `s` command.
+Add `void crew_transmit_names(void)` to `crew.c` and `crew.h`. For each crew member, build a comms line by appending the name to a `"TX: "` prefix using `strncat`, then print the result alongside `strlen(names[i])` as the payload byte count. Call it from `main.c` after `crew_print_manifest()`.
 
 ---
 
 ## 💭 Thought pieces for the next branch
 
-1. The comms log prints `"UNKNOWN"` for every crew name because there is no way to store text. How does C represent text in memory — what is a "string" at the byte level?
-2. The shuttle has a designation `"CALYPSO-7"`. If we store it as `char *designation = "CALYPSO-7"` and then try to modify the last character, what happens and why?
-3. We want to find a specific crew member by name. Can we compare two strings with `==`? What would that actually compare?
+1. Crew data is now spread across parallel arrays: `char names[MAX_CREW][MAX_NAME_LEN]`, `CrewRank ranks[MAX_CREW]`, `uint8_t ids[MAX_CREW]`. Adding a new field — say, a crew assignment — means a fourth parallel array and updates in every function that touches the roster. What is the risk of this design? Is there a way in C to represent "one crew member" as a single entity?
+2. We pass crew name, rank, and ID as three separate arguments wherever a function needs to describe a person. What would it look like to pass "a crew member" as a single argument?
+3. `names[i]` and `ranks[i]` refer to the same crew member by convention. If any function updates one array without touching the other, the indices fall out of sync and the manifest becomes inconsistent. What design change would make that class of bug impossible?
 
 ---
 
-*Previous branch: [`phase-09_arrays`]*
-*Next branch: [`phase-11_strings`]*
+*Previous branch: [`phase-10_pointers`]*
+*Next branch: [`phase-12_structs`]*
