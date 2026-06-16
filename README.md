@@ -180,13 +180,94 @@ Phase 11 added a crew management module using three parallel arrays: `char names
 
 ## 🔍 What to notice in the code
 
-_Completed after code is written._
+**[`crew.h:27–33`](crew.h#L27)**
+The `crew_member_t` typedef struct definition. All four fields — name, rank, id, assignment — are declared in one block. The comment above explains what this replaces: three parallel arrays where index `i` meant the same person by convention. Now there is no convention to enforce; the struct enforces it by construction.
+
+**[`crew.c:13–14`](crew.c#L13)**
+The declaration that replaces the three parallel arrays from Phase 11. `static crew_member_t crew[MAX_CREW]` is one array of six structs — one record per slot, all fields always together. Compare the Phase 11 declaration (`static char names[...][...]`, `static CrewRank ranks[...]`, `static uint8_t ids[...]`) with these two lines to see the structural change.
+
+**[`crew.c:47–51`](crew.c#L47)**
+`crew_init` using dot notation. `crew[i].name`, `crew[i].rank`, `crew[i].id`, and `crew[i].assignment` are accessed with a dot because `crew[i]` is a value (a struct element), not a pointer. The `strncpy` + explicit null-termination pattern is identical to Phase 11 — the field is still a `char` array; the struct wrapper does not change how string functions work on it.
+
+**[`crew.c:100–106`](crew.c#L100)**
+`crew_print_member` receives `crew_member_t m` by value. The comment explains the consequence: any modification to `m` inside the function — say, `m.rank = RANK_MEDIC` — would affect only the local copy and would be discarded when the function returns. Compare this with `crew_reassign` directly below.
+
+**[`crew.c:116–126`](crew.c#L116)**
+`crew_reassign` receives `crew_member_t *m` by pointer. The comment explains the arrow notation: `m->assignment = new_assignment` is shorthand for `(*m).assignment = new_assignment` — dereference first, then access the field. This writes directly into the caller's struct, so the change persists after the function returns. In `main.c`, [line 255](main.c#L255) calls this and the next `crew_print_member` confirms the assignment changed in the live roster.
+
+**[`main.c:20–52`](main.c#L20)**
+The `position_t` and `spacecraft_t` typedef struct definitions at file scope, above `main()`. `position_t` is a nested struct — it is a field type, not a standalone variable. `spacecraft_t` has a `position_t position` member, so `sc.position` accesses the nested struct and `sc.position.x_au` drills one level further with a second dot.
+
+**[`main.c:57–70`](main.c#L57)**
+`spacecraft_print_status` receives `spacecraft_t *sc` by pointer. Every field access uses arrow notation: `sc->shuttle_id`, `sc->velocity`, `sc->position.x_au`. The last one mixes arrow and dot — arrow to reach the struct through the pointer, then dot to reach the nested field inside that struct. No copy of `spacecraft_t` is made; the function reads directly through the pointer.
+
+**[`main.c:260–273`](main.c#L260)**
+The spacecraft demo block in `main()`. `sc` is initialised with dot notation (`sc.phase = PREFLIGHT`, `sc.position.x_au = 1.000f`). `spacecraft_print_status(&sc)` passes the address — inside the function, all the same fields are read with arrow notation. This is the single-point demo of the dot-vs-arrow distinction.
 
 ---
 
 ## ▶️ Running this branch
 
-_Completed after code is written._
+**Prerequisites:** GCC or Clang (C99+) and CMake 3.10+, or just GCC/Clang on its own.
+
+**With CMake (recommended):**
+```bash
+cmake -B build
+cmake --build build
+.\build\Debug\calypso.exe   # Windows (MSVC)
+.\build\calypso.exe         # Windows (MinGW)
+./build/calypso             # Linux / macOS
+```
+
+**Direct compilation (no CMake):**
+```bash
+gcc -std=c99 main.c sensors.c engine.c navigation.c crew.c -o calypso
+./calypso
+```
+
+After the engine control section, the crew identification block now shows:
+
+```
+--- Crew Identification ---
+Comms transmission      : COMMS: CHEN
+Lookup 'PARK'           : slot 2
+Lookup 'UNKNOWN_CREW'   : slot -1 (not found)
+Print member (by value) :
+  [101] CDR    FLIGHT    CHEN
+After reassign (by ptr) :
+  [101] CDR    SCI       CHEN
+```
+
+Followed by the spacecraft record:
+
+```
+--- Spacecraft Record ---
+  Shuttle       : CALYPSO-7
+  Phase         : PREFLIGHT
+  Velocity      : 32.70 km/s
+  Fuel          : 950 kg
+  Position      : (1.000, 0.000) AU
+```
+
+| Command | Action |
+|---|---|
+| `n` | Advance mission phase |
+| `s` | Sensor scan — history, averages, drift, channel reconfiguration |
+| `m` | Print crew manifest with ranks, assignments, and `crew_transmit_names` output |
+| `e` | Emergency shutdown via `goto` |
+| `q` | Normal quit |
+
+**Expected output — `m` command:**
+```
+--- Crew Manifest (3 / 6 slots) ---
+  [101] CDR    SCI       CHEN                     (4 chars)
+  [102] PLT    FLIGHT    VASQUEZ                  (7 chars)
+  [103] ENG    FLIGHT    PARK                     (4 chars)
+  TX: CHEN  (payload=4 bytes)
+  TX: VASQUEZ  (payload=7 bytes)
+  TX: PARK  (payload=4 bytes)
+Comms line              : TX[CHEN]  (len=8)
+```
 
 ---
 
@@ -202,10 +283,10 @@ _Completed after code is written._
 The `crew_find_by_name()` function now calls `strcmp(crew[i].name, name)` instead of `strcmp(names[i], name)`. The string comparison logic is identical. What did the refactor change structurally — and what does the new form make impossible that the parallel-array form allowed?
 
 **Challenge 4 — Additive**
-Add `void crew_print_member(crew_member_t m)` to `crew.c` and `crew.h`. It should print all four fields on one line. Call it from `main.c` for `crew[0]` after roster load. This function receives by value — confirm in a comment that `crew[0]` in `main.c` is unmodified after the call.
+Add `void crew_print_member(crew_member_t m)` to `crew.c` and `crew.h`. It should print all four fields on one line. Call it from `main.c` using `crew_get_member(0)` — the accessor returns a copy by value, which is passed directly into `crew_print_member`. Add a comment confirming that the roster slot is unmodified after the call.
 
 **Challenge 5 — Additive (stretch)**
-Add `void crew_reassign(crew_member_t *m, CrewAssignment new_assignment)` that updates the assignment field through the pointer. Call it from `main.c` to move `crew[0]` to `ASSIGN_SCIENCE`, then call `crew_print_member(crew[0])` to confirm the change. Add a comment explaining why a pointer parameter was required here instead of pass-by-value.
+Add `void crew_reassign(crew_member_t *m, CrewAssignment new_assignment)` that updates the assignment field through the pointer using arrow notation. Call it from `main.c` using `crew_get_member_ptr(0)` to move the first crew member to `ASSIGN_SCIENCE`, then call `crew_print_member(crew_get_member(0))` to confirm the change is reflected in the live roster. Add a comment explaining why a pointer parameter was required here instead of pass-by-value.
 
 ---
 
