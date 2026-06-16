@@ -119,7 +119,7 @@ flowchart TD
     record -->|writes index slot| buffers
     main -->|calls| query
     query -->|passes array + length| helpers
-    helpers -->|reads via buf[i]| buffers
+    helpers -->|reads via pointer arithmetic| buffers
 ```
 
 ---
