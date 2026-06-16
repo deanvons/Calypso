@@ -187,7 +187,26 @@ flowchart LR
 
 ## 🔍 What to notice in the code
 
-*Placeholder — completed after code is written.*
+**[`sensors.c:86–89`](sensors.c#L86)**
+`sensors_calibrate` is the simplest pointer function in the codebase: `*reading += offset` follows the address in `reading` and writes directly to the caller's variable. Compare [line 79](sensors.c#L79): `sensors_apply_calibration` takes `uint16_t reading` by value — there is no path back. `sensors_calibrate` takes `uint16_t *reading` — the caller passes `&fuel_cal` and the modification is visible after the call.
+
+**[`sensors.c:24–31`](sensors.c#L24)**
+`compute_average` now takes `const uint16_t *buf` — the `const` qualifier tells both the caller and the compiler that this function will only read through `buf`. Any attempt to write through it inside the function is a compile error. Compare `detect_drift` at [line 41](sensors.c#L41): also takes `const uint16_t *buf`, for the same reason.
+
+**[`sensors.c:41–54`](sensors.c#L41)**
+`detect_drift` iterates with a pointer variable instead of index arithmetic. `ptr = buf` initialises the pointer to the first element; `end = buf + len` sets a sentinel one past the last; `ptr++` advances by `sizeof(uint16_t)` bytes per step; `*ptr` dereferences the current element. This is equivalent to `buf[i]` — the compiler generates identical machine code — but makes the pointer arithmetic visible.
+
+**[`sensors.c:93–96`](sensors.c#L93)**
+`sensors_configure_channel` demonstrates `**`. The parameter is `uint16_t **channel` — a pointer to a `uint16_t *`. `*channel = new_buf` writes a new address into the caller's pointer variable, redirecting it to a different history buffer. Without the extra level of indirection, the function would only receive a copy of the pointer and `primary_channel` in `main.c` would be unchanged after the call.
+
+**[`engine.c:29`](engine.c#L29)**
+`static uint32_t * const pENGINE_CTRL = &ENGINE_CTRL` — a const pointer to the engine control register. The pointer is initialised at definition and cannot be reseated; `*pENGINE_CTRL` always addresses `ENGINE_CTRL`. All engine functions that read or write `ENGINE_CTRL` do so via `*pENGINE_CTRL` (see lines 44–62). On real embedded hardware this would be `volatile uint32_t * const` pointing to a fixed memory address — the `volatile` qualifier is added in Phase 14.
+
+**[`main.c:64–88`](main.c#L64)**
+Two block comments side by side tell the full pointer story. The first is a `DELIBERATE` block showing what NOT to do: an uninitialised pointer with a garbage address, a null pointer dereference, and a dangling pointer after a local variable leaves scope — none of these are executed, but they are visible at the exact point in the code where pointers are first used. The second comment explains `sensors_calibrate(&fuel_cal, 5)` on [line 87](main.c#L87): `&fuel_cal` takes the address of the local, `*reading` inside the function follows it and applies the offset.
+
+**[`main.c:278–282`](main.c#L278)**
+The channel reconfiguration demo in the `s` command block. `primary_channel` starts as `NULL`; `sensors_configure_channel(&primary_channel, sensors_fuel_history_ptr())` redirects it to `fuel_history`; `sensors_compute_channel_avg(primary_channel)` reads the average via the `const uint16_t *` parameter. The second call to `sensors_configure_channel` redirects to `velocity_history`. Press `s` ten times and both averages stabilise as the buffers fill.
 
 ---
 
@@ -201,7 +220,49 @@ With pointers come new obligations. `sensors_calibrate(uint16_t *reading, uint16
 
 ## ▶️ Running this branch
 
-*Placeholder — completed after code is written.*
+**Prerequisites:** GCC or Clang (C99+) and CMake 3.10+, or just GCC/Clang on its own.
+
+**With CMake (recommended):**
+```bash
+cmake -B build
+cmake --build build
+.\build\Debug\calypso.exe   # Windows (MSVC)
+.\build\calypso.exe         # Windows (MinGW)
+./build/calypso             # Linux / macOS
+```
+
+**Direct compilation (no CMake):**
+```bash
+gcc -std=c99 main.c sensors.c engine.c navigation.c -o calypso
+./calypso
+```
+
+The boot sequence now prints three fuel lines — original, pass-by-value calibrated, and in-place calibrated — before the navigation output:
+
+```
+Fuel (original)      : 950 kg  (unchanged after sensors_apply_calibration)
+Fuel (calibrated)    : 955 kg  (copy returned by the function)
+Fuel (in-place, ptr) : 955 kg  (sensors_calibrate wrote through &fuel_cal)
+```
+
+The `s` command now shows the fuel and pressure averages, drift index, and channel reconfiguration output:
+
+| Command | Action |
+|---|---|
+| `n` | Advance mission phase |
+| `s` | Sensor scan — records fuel, velocity, and pressure into history; prints averages, drift index, and channel reconfiguration demo |
+| `e` | Emergency shutdown via `goto` |
+| `q` | Normal quit |
+
+**Expected output — first sensor scan:**
+```
+Fuel avg (history)     : 95.0 kg  |  drift at index: 0
+Pressure avg (history) : 10.1 kPa
+Channel -> fuel        : 95.0 kg avg
+Channel -> velocity    : 3.2 avg
+```
+
+The drift index is 0 on the first scan — the first reading (950 kg) deviates far from the zero-padded average (95.0). After ten presses all slots fill with real readings, the average stabilises, and drift index returns -1.
 
 ---
 
