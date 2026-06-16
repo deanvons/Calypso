@@ -17,6 +17,45 @@ enum MissionPhase {
     DOCKED      /* 4 -- mission complete */
 };
 
+/* --- Spacecraft struct (Phase 12 demo) ------------------------------------ */
+
+typedef struct {
+    float x_au;
+    float y_au;
+} position_t;
+
+/*
+ * spacecraft_t groups mission state and sensor snapshot into one object.
+ * position is a nested struct -- a field whose type is itself a struct.
+ * Access the inner field with a chain of dots: sc.position.x_au.
+ */
+typedef struct {
+    char              shuttle_id[16];
+    enum MissionPhase phase;
+    sensor_float_t    velocity;
+    uint16_t          fuel;
+    position_t        position;
+} spacecraft_t;
+
+/*
+ * spacecraft_print_status receives a pointer to spacecraft_t.
+ * Arrow notation (sc->field) is shorthand for (*sc).field.
+ * All reads go through the pointer -- no copy of the struct is made.
+ */
+static void spacecraft_print_status(spacecraft_t *sc) {
+    const char *phase_name =
+        (sc->phase == PREFLIGHT) ? "PREFLIGHT" :
+        (sc->phase == LAUNCH)    ? "LAUNCH"    :
+        (sc->phase == CRUISE)    ? "CRUISE"    :
+        (sc->phase == APPROACH)  ? "APPROACH"  : "DOCKED";
+    printf("  Shuttle       : %s\n",        sc->shuttle_id);
+    printf("  Phase         : %s\n",        phase_name);
+    printf("  Velocity      : %.2f km/s\n", sc->velocity);
+    printf("  Fuel          : %" PRIu16 " kg\n", sc->fuel);
+    /* sc->position.x_au: arrow to reach position, then dot to reach the nested field */
+    printf("  Position      : (%.3f, %.3f) AU\n", sc->position.x_au, sc->position.y_au);
+}
+
 int main(void) {
     printf("=========================================\n");
     printf("  CALYPSO FLIGHT COMPUTER\n");
@@ -190,7 +229,45 @@ int main(void) {
     int found = crew_find_by_name("PARK");
     printf("Lookup 'PARK'           : slot %d\n", found);
     found = crew_find_by_name("UNKNOWN_CREW");
-    printf("Lookup 'UNKNOWN_CREW'   : slot %d (not found)\n\n", found);
+    printf("Lookup 'UNKNOWN_CREW'   : slot %d (not found)\n", found);
+
+    /*
+     * crew_get_member returns a copy by value -- crew[0]'s fields are copied
+     * into m. crew_print_member prints from m; any change inside that function
+     * to m would not affect the roster.
+     */
+    printf("Print member (by value) :\n");
+    crew_print_member(crew_get_member(0));
+
+    /*
+     * crew_get_member_ptr returns &crew[0] -- the address of the live slot.
+     * crew_reassign writes through the pointer (m->assignment = ...), so
+     * the change is visible in the roster after the function returns.
+     */
+    crew_reassign(crew_get_member_ptr(0), ASSIGN_SCIENCE);
+    printf("After reassign (by ptr) :\n");
+    crew_print_member(crew_get_member(0));
+    printf("\n");
+
+    /* --- Spacecraft record ----------------------------------------------- */
+    /*
+     * Dot notation: sc.shuttle_id, sc.fuel access fields directly on the value.
+     * Nested struct: sc.position.x_au -- one dot per level of nesting.
+     * spacecraft_print_status receives &sc -- the function uses arrow notation
+     * (sc->field) to read through the pointer without copying the struct.
+     */
+    spacecraft_t sc;
+    strncpy(sc.shuttle_id, "CALYPSO-7", sizeof(sc.shuttle_id) - 1);
+    sc.shuttle_id[sizeof(sc.shuttle_id) - 1] = '\0';
+    sc.phase        = PREFLIGHT;
+    sc.velocity     = velocity;
+    sc.fuel         = fuel;
+    sc.position.x_au = 1.000f; /* Earth orbit */
+    sc.position.y_au = 0.000f;
+
+    printf("--- Spacecraft Record ---\n");
+    spacecraft_print_status(&sc); /* arrow notation inside this function */
+    printf("\n");
 
     /* --- Command loop -------------------------------------------------- */
 
