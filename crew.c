@@ -38,7 +38,7 @@ void crew_init(void) {
          */
         strncpy(names[i], "UNKNOWN", MAX_NAME_LEN - 1);
         names[i][MAX_NAME_LEN - 1] = '\0';
-        ranks[i] = RANK_ENGINEER;
+        ranks[i] = RANK_ENGINEER; /* DELIBERATE: no rank setter exists yet -- crew_set_rank() is Challenge 4 */
         ids[i]   = 0;
     }
     loaded = 0;
@@ -87,7 +87,7 @@ void crew_print_manifest(void) {
         /* strlen counts bytes from names[i] up to but not including '\0' */
         size_t name_len = strlen(names[i]);
         printf("  [%03u] %-5s  %-*s  (%zu chars)\n",
-               ids[i], rank_label(ranks[i]),
+               (unsigned)ids[i], rank_label(ranks[i]),
                MAX_NAME_LEN - 1, names[i],
                name_len);
     }

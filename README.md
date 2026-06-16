@@ -257,9 +257,9 @@ Lookup 'UNKNOWN_CREW'   : slot -1 (not found)
 **Expected output — `m` command:**
 ```
 --- Crew Manifest (3 / 6 slots) ---
-  [101] ENG    CHEN                    (4 chars)
-  [102] ENG    VASQUEZ                 (7 chars)
-  [103] ENG    PARK                    (4 chars)
+  [101] ENG    CHEN                     (4 chars)
+  [102] ENG    VASQUEZ                  (7 chars)
+  [103] ENG    PARK                     (4 chars)
 Comms line              : TX[CHEN]  (len=8)
 ```
 
