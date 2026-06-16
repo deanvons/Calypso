@@ -183,7 +183,23 @@ Phase 10 added pointer-based in-place calibration (`sensors_calibrate`), `const`
 
 ## 🔍 What to notice in the code
 
-*Completed after code is written.*
+**[`main.c:38–49`](main.c#L38)**
+Two declarations side by side show the literal-vs-mutable split. `const char *mission_label = "CALYPSO-7"` stores a pointer to read-only memory — the comment explains why writing through it would be undefined behaviour. `char mission_id[] = "CALYPSO-7"` copies those bytes onto the stack; `mission_id[8] = '8'` on [line 46](main.c#L46) modifies the copy safely and the output shows the result.
+
+**[`crew.c:39–40`](crew.c#L39)**
+`crew_init` uses `strncpy` to fill every name slot with `"UNKNOWN"`. The explicit `names[i][MAX_NAME_LEN - 1] = '\0'` on the next line is deliberate: the block comment above explains that `strncpy` does not null-terminate when the source is longer than the bound. "UNKNOWN" is short enough that this call is safe without it — but the pattern must be consistent. `crew_set_name` at [line 55–56](crew.c#L55) shows the same pattern in a case where it actually matters.
+
+**[`crew.c:47–58`](crew.c#L47)**
+`crew_set_name` is the string assignment function. The block comment on lines 49–54 explains the exact condition under which `strncpy` leaves `dest` unterminated: when `src` fills the entire bound without reaching a `'\0'`. Line 55 copies; line 56 forces termination. Without line 56, a name exactly 23 characters long would produce an unterminated array and undefined behaviour in any subsequent `strlen` or `strcmp` call.
+
+**[`crew.c:70–82`](crew.c#L70)**
+`crew_find_by_name` walks the roster with `strcmp`. The comment on lines 72–76 explains why `==` is wrong: it would compare pointer addresses, not string contents. Two arrays both holding `"PARK"` at different addresses would compare unequal with `==` but return 0 from `strcmp`. This is the core behavioural difference — compare the implementation here with what Challenge 2 asks you to reason through.
+
+**[`crew.c:84–94`](crew.c#L84)**
+`crew_print_manifest` uses `strlen` on each stored name. `strlen(names[i])` counts bytes up to but not including the null terminator — so `"CHEN"` returns 4, not 5. The manifest prints this count as the payload character length, simulating a comms transmission where byte count matters.
+
+**[`main.c:175–183`](main.c#L175)**
+The `strncat` demonstration in the crew identification section. The bound on line 182 is `sizeof(comms_buf) - strlen(comms_buf) - 1`: total capacity minus bytes already occupied minus one byte reserved for the terminator. Without this calculation, `strncat` could append past the end of `comms_buf`. The `m` command at [line 277](main.c#L277) shows a second `strncat` call that builds a bracketed comms line by chaining two appends.
 
 ---
 
@@ -197,7 +213,57 @@ Crew data in this phase lives in three parallel arrays: `names[MAX_CREW][MAX_NAM
 
 ## ▶️ Running this branch
 
-*Completed after code is written.*
+**Prerequisites:** GCC or Clang (C99+) and CMake 3.10+, or just GCC/Clang on its own.
+
+**With CMake (recommended):**
+```bash
+cmake -B build
+cmake --build build
+.\build\Debug\calypso.exe   # Windows (MSVC)
+.\build\calypso.exe         # Windows (MinGW)
+./build/calypso             # Linux / macOS
+```
+
+**Direct compilation (no CMake):**
+```bash
+gcc -std=c99 main.c sensors.c engine.c navigation.c crew.c -o calypso
+./calypso
+```
+
+The boot sequence now includes the string literal vs mutable array demonstration immediately after the startup banner:
+
+```
+Mission label (literal) : CALYPSO-7  (read-only; cannot be modified)
+Mission ID (mutable)    : CALYPSO-8  (stack copy; safely modified)
+```
+
+After engine control output, the crew identification section prints:
+
+```
+--- Crew Identification ---
+Comms transmission      : COMMS: CHEN
+Lookup 'PARK'           : slot 2
+Lookup 'UNKNOWN_CREW'   : slot -1 (not found)
+```
+
+| Command | Action |
+|---|---|
+| `n` | Advance mission phase |
+| `s` | Sensor scan — history, averages, drift, channel reconfiguration |
+| `m` | Print crew manifest with name lengths; build comms line with `strncat` |
+| `e` | Emergency shutdown via `goto` |
+| `q` | Normal quit |
+
+**Expected output — `m` command:**
+```
+--- Crew Manifest (3 / 6 slots) ---
+  [101] ENG    CHEN                    (4 chars)
+  [102] ENG    VASQUEZ                 (7 chars)
+  [103] ENG    PARK                    (4 chars)
+Comms line              : TX[CHEN]  (len=8)
+```
+
+All three crew members show `ENG` (default rank) until Challenge 4 adds `crew_set_rank`.
 
 ---
 
