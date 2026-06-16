@@ -273,7 +273,7 @@ All three crew members show `ENG` (default rank) until Challenge 4 adds `crew_se
 `strncpy(dest, src, MAX_NAME_LEN)` does not always null-terminate `dest`. Under exactly what condition does it leave `dest` without a null terminator? Why is that dangerous for any function that later reads `dest` as a C string? How does `crew_set_name()` in this phase prevent that outcome?
 
 **Challenge 2 — Analytical**
-What does `strcmp("COMMANDER", "commander")` return, and why? If you wanted `crew_find_by_name()` to match names regardless of case — so `"chen"` finds the slot holding `"CHEN"` — how would you approach that without changing the stored names? Name the standard library function you would need and describe the approach. (You do not need to implement it.)
+What does `strcmp("COMMANDER", "commander")` return, and why? If you wanted `crew_find_by_name()` to match names regardless of case — so `"chen"` finds the slot holding `"CHEN"` — how would you approach that without changing the stored names? Describe the approach at the character level. (You do not need to implement it.)
 
 **Challenge 3 — Analytical**
 `strlen("CALYPSO-7")` returns 9. How many bytes does `char mission_id[] = "CALYPSO-7"` occupy on the stack? Why is there a one-byte discrepancy, and why does `strlen` not include that extra byte in its count?
