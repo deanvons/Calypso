@@ -1,5 +1,7 @@
 /* sensors.c -- sensor read, fault-check, and history buffer implementations */
 
+#include <stdio.h>
+#include <inttypes.h>
 #include "sensors.h"
 
 /* --- History buffers (file-scope, invisible outside this translation unit) --- */
@@ -19,7 +21,8 @@ static int      velocity_idx = 0;
  * buf[i] and *(buf + i) are identical: the subscript operator is defined as
  * pointer arithmetic (advance i steps of sizeof(*buf) bytes) plus dereference.
  */
-static sensor_float_t compute_average(uint16_t *buf, int len) {
+/* const uint16_t *: this function only reads through buf -- cannot write to it */
+static sensor_float_t compute_average(const uint16_t *buf, int len) {
     sensor_float_t sum = 0.0f;
     for (int i = 0; i < len; i++) {
         sum += (sensor_float_t)buf[i];  /* buf[i] == *(buf + i) */
@@ -27,13 +30,21 @@ static sensor_float_t compute_average(uint16_t *buf, int len) {
     return sum / (sensor_float_t)len;
 }
 
-/* SOLUTION (Challenge 5): returns the index of the first reading that deviates
+/*
+ * SOLUTION (Challenge 5): returns the index of the first reading that deviates
  * from the mean by more than threshold, or -1 if no such reading exists.
+ *
+ * Pointer arithmetic: ptr starts at buf (first element) and advances by one
+ * uint16_t per iteration. *ptr dereferences the current element -- identical
+ * to buf[i] but using the pointer directly rather than an index offset.
  */
-static int detect_drift(uint16_t *buf, int len, uint16_t threshold) {
-    sensor_float_t avg = compute_average(buf, len);
-    for (int i = 0; i < len; i++) {
-        sensor_float_t diff = (sensor_float_t)buf[i] - avg;
+static int detect_drift(const uint16_t *buf, int len, uint16_t threshold) {
+    sensor_float_t     avg = compute_average(buf, len);
+    const uint16_t    *ptr = buf;         /* pointer to first element */
+    const uint16_t    *end = buf + len;   /* one past the last element */
+    int                i   = 0;
+    for (; ptr != end; ptr++, i++) {
+        sensor_float_t diff = (sensor_float_t)*ptr - avg;
         if (diff < 0.0f) diff = -diff;
         if (diff > (sensor_float_t)threshold) {
             return i;
@@ -68,6 +79,28 @@ sensor_float_t sensors_read_pressure(void) {
 uint16_t sensors_apply_calibration(uint16_t reading, uint16_t offset) {
     reading += offset;
     return reading;
+}
+
+/* --- In-place calibration -------------------------------------------- */
+
+void sensors_calibrate(uint16_t *reading, uint16_t offset) {
+    /* *reading follows the pointer to the caller's variable and modifies it */
+    *reading += offset;
+}
+
+/* --- Sensor channel reconfiguration ---------------------------------- */
+
+void sensors_configure_channel(uint16_t **channel, uint16_t *new_buf) {
+    /* *channel is the caller's uint16_t * variable; assigning new_buf redirects it */
+    *channel = new_buf;
+}
+
+uint16_t *sensors_fuel_history_ptr(void)     { return fuel_history; }
+uint16_t *sensors_velocity_history_ptr(void) { return velocity_history; }
+
+/* const uint16_t *: caller's pointer is read-only once passed here */
+sensor_float_t sensors_compute_channel_avg(const uint16_t *channel) {
+    return compute_average(channel, SENSOR_HISTORY_LEN);
 }
 
 /* --- History buffer public API --------------------------------------- */

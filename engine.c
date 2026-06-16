@@ -20,6 +20,14 @@
 static uint32_t ENGINE_CTRL   = 0u;
 static uint32_t ENGINE_STATUS = 0u;
 
+/*
+ * uint32_t * const: this pointer is fixed -- it always addresses ENGINE_CTRL.
+ * The value at that address can change; the pointer itself cannot be reseated.
+ * On real hardware this would point to a fixed memory-mapped register address.
+ * NOTE: volatile would be added in Phase 14 for true hardware register access.
+ */
+static uint32_t * const pENGINE_CTRL = &ENGINE_CTRL;
+
 /* Bit-position constants -- private to this file */
 static const uint8_t THROTTLE_SHIFT     = 4;
 static const uint8_t THROTTLE_MASK      = 0x0Fu;
@@ -34,24 +42,24 @@ static uint8_t thruster_bit(uint8_t thruster) {
 }
 
 void engine_enable_thruster(uint8_t thruster) {
-    ENGINE_CTRL |= ((uint32_t)1u << thruster_bit(thruster));
+    *pENGINE_CTRL |= ((uint32_t)1u << thruster_bit(thruster));
 }
 
 void engine_disable_thruster(uint8_t thruster) {
-    ENGINE_CTRL &= ~((uint32_t)1u << thruster_bit(thruster));
+    *pENGINE_CTRL &= ~((uint32_t)1u << thruster_bit(thruster));
 }
 
 void engine_set_throttle(uint8_t level) {
-    ENGINE_CTRL &= ~((uint32_t)THROTTLE_MASK << THROTTLE_SHIFT);
-    ENGINE_CTRL |=  ((uint32_t)level          << THROTTLE_SHIFT);
+    *pENGINE_CTRL &= ~((uint32_t)THROTTLE_MASK << THROTTLE_SHIFT);
+    *pENGINE_CTRL |=  ((uint32_t)level          << THROTTLE_SHIFT);
 }
 
 uint8_t engine_read_throttle(void) {
-    return (uint8_t)((ENGINE_CTRL >> THROTTLE_SHIFT) & THROTTLE_MASK);
+    return (uint8_t)((*pENGINE_CTRL >> THROTTLE_SHIFT) & THROTTLE_MASK);
 }
 
 uint32_t engine_get_ctrl(void) {
-    return ENGINE_CTRL;
+    return *pENGINE_CTRL;
 }
 
 uint32_t engine_get_status(void) {
@@ -79,5 +87,5 @@ void engine_clear_status(void) {
 }
 
 void engine_reset(void) {
-    ENGINE_CTRL = 0u;
+    *pENGINE_CTRL = 0u;
 }

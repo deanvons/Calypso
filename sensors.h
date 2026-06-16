@@ -27,6 +27,27 @@ sensor_float_t sensors_read_pressure(void);
  */
 uint16_t       sensors_apply_calibration(uint16_t reading, uint16_t offset);
 
+/* --- In-place calibration -------------------------------------------- */
+
+/*
+ * sensors_calibrate -- modifies *reading in place.
+ * Takes the address of the caller's variable; *reading += offset writes
+ * through the pointer. No return value: the side effect is the result.
+ */
+void           sensors_calibrate(uint16_t *reading, uint16_t offset);
+
+/* --- Sensor channel reconfiguration (pointer-to-pointer) ------------- */
+
+/*
+ * sensors_configure_channel -- redirects *channel to point at new_buf.
+ * Takes uint16_t ** so it can modify the caller's pointer variable.
+ * Without **, the function would only receive a copy of the pointer.
+ */
+void           sensors_configure_channel(uint16_t **channel, uint16_t *new_buf);
+uint16_t      *sensors_fuel_history_ptr(void);
+uint16_t      *sensors_velocity_history_ptr(void);
+sensor_float_t sensors_compute_channel_avg(const uint16_t *channel);
+
 /* --- History buffers ------------------------------------------------- */
 
 void           sensors_record_fuel(uint16_t reading);

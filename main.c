@@ -59,7 +59,33 @@ int main(void) {
      */
     uint16_t fuel_calibrated = sensors_apply_calibration(fuel, 5);
     printf("Fuel (original)      : %" PRIu16 " kg  (unchanged after sensors_apply_calibration)\n", fuel);
-    printf("Fuel (calibrated)    : %" PRIu16 " kg  (copy returned by the function)\n\n", fuel_calibrated);
+    printf("Fuel (calibrated)    : %" PRIu16 " kg  (copy returned by the function)\n", fuel_calibrated);
+
+    /* --- In-place calibration (pointer) -------------------------------- */
+    /*
+     * DELIBERATE (not executed): the three pointer pitfalls.
+     *
+     *   uint16_t *uninit;          // uninitialised -- holds a garbage address
+     *   *uninit = 42;              // UB: writes to an unknown memory location
+     *
+     *   uint16_t *null_ptr = NULL; // null -- address 0, a known-invalid value
+     *   *null_ptr = 42;            // crash: NULL dereference; test first: ptr != NULL
+     *
+     *   uint16_t *dangling;
+     *   { uint16_t local = 5; dangling = &local; }
+     *   printf("%u\n", *dangling); // UB: local is gone; dangling holds a dead address
+     *
+     * NULL is detectable before dereference (ptr != NULL).
+     * Uninitialised and dangling pointers are not -- they hold addresses that look valid.
+     */
+    /*
+     * sensors_calibrate receives &fuel_cal -- the address of a local variable.
+     * *reading += offset inside the function writes through that address, modifying
+     * fuel_cal directly. No return value: the side effect is the result.
+     */
+    uint16_t fuel_cal = fuel;
+    sensors_calibrate(&fuel_cal, 5);
+    printf("Fuel (in-place, ptr) : %" PRIu16 " kg  (sensors_calibrate wrote through &fuel_cal)\n\n", fuel_cal);
 
     /* --- Navigation ---------------------------------------------------- */
 
@@ -241,7 +267,19 @@ int main(void) {
             // NOTE: float-to-integer cast truncates toward zero (101.325f → 101)
             sensors_record_pressure((uint16_t)cabin_pressure);
             sensor_float_t pressure_avg = sensors_compute_pressure_avg();
-            printf("Pressure avg (history) : %.1f kPa\n\n", pressure_avg);
+            printf("Pressure avg (history) : %.1f kPa\n", pressure_avg);
+
+            /*
+             * Sensor channel reconfiguration: sensors_configure_channel takes uint16_t **
+             * so it can redirect what primary_channel points to. Passing &primary_channel
+             * gives the function the address of the pointer -- *channel = new_buf inside
+             * the function changes the pointer itself, not the value it pointed to.
+             */
+            uint16_t *primary_channel = NULL;
+            sensors_configure_channel(&primary_channel, sensors_fuel_history_ptr());
+            printf("Channel -> fuel        : %.1f kg avg\n", sensors_compute_channel_avg(primary_channel));
+            sensors_configure_channel(&primary_channel, sensors_velocity_history_ptr());
+            printf("Channel -> velocity    : %.1f avg\n\n", sensors_compute_channel_avg(primary_channel));
         }
 
         if (engine_fault_critical()) {
