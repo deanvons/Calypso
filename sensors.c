@@ -88,6 +88,11 @@ void sensors_calibrate(uint16_t *reading, uint16_t offset) {
     *reading += offset;
 }
 
+// SOLUTION (Challenge 4): same pass-by-pointer pattern applied to velocity
+void sensors_calibrate_velocity(uint16_t *reading, uint16_t offset) {
+    *reading += offset;
+}
+
 /* --- Sensor channel reconfiguration ---------------------------------- */
 
 void sensors_configure_channel(uint16_t **channel, uint16_t *new_buf) {
@@ -140,4 +145,15 @@ void sensors_record_pressure(uint16_t reading) {
 
 sensor_float_t sensors_compute_pressure_avg(void) {
     return compute_average(pressure_history, SENSOR_HISTORY_LEN);
+}
+
+/* SOLUTION (Challenge 5): pointer-based history walk with address output */
+void sensors_print_history_ptr(const uint16_t *buf, int len) {
+    const uint16_t *ptr = buf;
+    const uint16_t *end = buf + len;
+    int             i   = 0;
+    printf("  History buffer (%d elements):\n", len);
+    for (; ptr != end; ptr++, i++) {
+        printf("    [%d] value=%" PRIu16 "  addr=%p\n", i, *ptr, (const void *)ptr);
+    }
 }

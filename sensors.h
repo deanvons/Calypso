@@ -35,6 +35,8 @@ uint16_t       sensors_apply_calibration(uint16_t reading, uint16_t offset);
  * through the pointer. No return value: the side effect is the result.
  */
 void           sensors_calibrate(uint16_t *reading, uint16_t offset);
+// SOLUTION (Challenge 4): velocity calibration -- same pass-by-pointer pattern
+void           sensors_calibrate_velocity(uint16_t *reading, uint16_t offset);
 
 /* --- Sensor channel reconfiguration (pointer-to-pointer) ------------- */
 
@@ -59,3 +61,11 @@ int            sensors_detect_fuel_drift(void);
 // SOLUTION (Challenge 4): pressure history buffer API
 void           sensors_record_pressure(uint16_t reading);
 sensor_float_t sensors_compute_pressure_avg(void);
+
+/*
+ * sensors_print_history_ptr -- SOLUTION (Challenge 5, stretch).
+ * Iterates buf using a pointer variable (ptr++, not index notation)
+ * and prints each element's value and memory address.
+ */
+// SOLUTION (Challenge 5): pointer-based history walk with address output
+void           sensors_print_history_ptr(const uint16_t *buf, int len);

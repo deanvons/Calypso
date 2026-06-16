@@ -87,6 +87,11 @@ int main(void) {
     sensors_calibrate(&fuel_cal, 5);
     printf("Fuel (in-place, ptr) : %" PRIu16 " kg  (sensors_calibrate wrote through &fuel_cal)\n\n", fuel_cal);
 
+    // SOLUTION (Challenge 4): velocity calibration using same pass-by-pointer pattern
+    uint16_t vel_cal = (uint16_t)velocity;
+    sensors_calibrate_velocity(&vel_cal, 2);
+    printf("Velocity (in-place)  : %" PRIu16 " km/s  (sensors_calibrate_velocity wrote through &vel_cal)\n\n", vel_cal);
+
     /* --- Navigation ---------------------------------------------------- */
 
     printf("--- Navigation ---\n");
@@ -262,6 +267,8 @@ int main(void) {
             int            drift_idx  = sensors_detect_fuel_drift();
             printf("Fuel avg (history)     : %.1f kg  |  drift at index: %d\n",
                    fuel_avg, drift_idx);
+            // SOLUTION (Challenge 5): pointer-based history walk with addresses
+            sensors_print_history_ptr(sensors_fuel_history_ptr(), SENSOR_HISTORY_LEN);
 
             // SOLUTION (Challenge 4): record pressure into history and print average
             // NOTE: float-to-integer cast truncates toward zero (101.325f → 101)
