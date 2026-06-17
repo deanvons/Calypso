@@ -186,19 +186,19 @@ The `crew_member_t` typedef struct definition. All four fields — name, rank, i
 **[`crew.c:13–14`](crew.c#L13)**
 The declaration that replaces the three parallel arrays from Phase 11. `static crew_member_t crew[MAX_CREW]` is one array of six structs — one record per slot, all fields always together. Compare the Phase 11 declaration (`static char names[...][...]`, `static CrewRank ranks[...]`, `static uint8_t ids[...]`) with these two lines to see the structural change.
 
-**[`crew.c:47–51`](crew.c#L47)**
+**[`crew.c:45–51`](crew.c#L45)**
 `crew_init` using dot notation. `crew[i].name`, `crew[i].rank`, `crew[i].id`, and `crew[i].assignment` are accessed with a dot because `crew[i]` is a value (a struct element), not a pointer. The `strncpy` + explicit null-termination pattern is identical to Phase 11 — the field is still a `char` array; the struct wrapper does not change how string functions work on it.
 
-**[`crew.c:100–106`](crew.c#L100)**
+**[`crew.c:122–134`](crew.c#L122)**
 `crew_print_member` receives `crew_member_t m` by value. The comment explains the consequence: any modification to `m` inside the function — say, `m.rank = RANK_MEDIC` — would affect only the local copy and would be discarded when the function returns. Compare this with `crew_reassign` directly below.
 
-**[`crew.c:116–126`](crew.c#L116)**
-`crew_reassign` receives `crew_member_t *m` by pointer. The comment explains the arrow notation: `m->assignment = new_assignment` is shorthand for `(*m).assignment = new_assignment` — dereference first, then access the field. This writes directly into the caller's struct, so the change persists after the function returns. In `main.c`, [line 255](main.c#L255) calls this and the next `crew_print_member` confirms the assignment changed in the live roster.
+**[`crew.c:144–153`](crew.c#L144)**
+`crew_reassign` receives `crew_member_t *m` by pointer. The comment explains the arrow notation: `m->assignment = new_assignment` is shorthand for `(*m).assignment = new_assignment` — dereference first, then access the field. This writes directly into the caller's struct, so the change persists after the function returns. In `main.c`, [line 247](main.c#L247) calls this and the next `crew_print_member` confirms the assignment changed in the live roster.
 
-**[`main.c:20–52`](main.c#L20)**
+**[`main.c:20–38`](main.c#L20)**
 The `position_t` and `spacecraft_t` typedef struct definitions at file scope, above `main()`. `position_t` is a nested struct — it is a field type, not a standalone variable. `spacecraft_t` has a `position_t position` member, so `sc.position` accesses the nested struct and `sc.position.x_au` drills one level further with a second dot.
 
-**[`main.c:57–70`](main.c#L57)**
+**[`main.c:45–57`](main.c#L45)**
 `spacecraft_print_status` receives `spacecraft_t *sc` by pointer. Every field access uses arrow notation: `sc->shuttle_id`, `sc->velocity`, `sc->position.x_au`. The last one mixes arrow and dot — arrow to reach the struct through the pointer, then dot to reach the nested field inside that struct. No copy of `spacecraft_t` is made; the function reads directly through the pointer.
 
 **[`main.c:260–273`](main.c#L260)**
