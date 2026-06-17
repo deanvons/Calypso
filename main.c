@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdint.h>
 #include <inttypes.h>
 #include <stdbool.h>
@@ -54,6 +55,27 @@ static void spacecraft_print_status(spacecraft_t *sc) {
     printf("  Fuel          : %" PRIu16 " kg\n", sc->fuel);
     /* sc->position.x_au: arrow to reach position, then dot to reach the nested field */
     printf("  Position      : (%.3f, %.3f) AU\n", sc->position.x_au, sc->position.y_au);
+}
+
+/*
+ * log_append: append entry to a dynamically-sized string buffer.
+ * Doubles the buffer with realloc whenever the entry would not fit.
+ * Safe realloc pattern: assigns to tmp first; on failure, *buf remains valid.
+ */
+static void log_append(char **buf, size_t *cap, size_t *len, const char *entry) {
+    size_t entry_len = strlen(entry);
+    while (*len + entry_len + 1 > *cap) {
+        size_t new_cap = *cap * 2;
+        char  *tmp     = realloc(*buf, new_cap);
+        if (tmp == NULL) {
+            fprintf(stderr, "log_append: realloc failed\n");
+            return;
+        }
+        *buf = tmp;
+        *cap = new_cap;
+    }
+    strncat(*buf, entry, *cap - *len - 1);
+    *len += entry_len;
 }
 
 int main(void) {
@@ -202,16 +224,45 @@ int main(void) {
 
     engine_clear_status(); /* reset STATUS before entering the command loop */
 
-    /* --- Crew manifest ------------------------------------------------- */
+    /* --- Crew manifest and mission log (Phase 13: dynamic allocation) -------- */
 
+    /*
+     * crew_init: allocates the roster on the heap with calloc.
+     * calloc zeroes all bytes; the roster starts in a known, clean state.
+     * Internal INITIAL_CAP is 2 -- adding a third member triggers the first realloc.
+     */
     crew_init();
-    crew_set_name(0, "CHEN");    crew_set_id(0, 101);
-    crew_set_name(1, "VASQUEZ"); crew_set_id(1, 102);
-    crew_set_name(2, "PARK");    crew_set_id(2, 103);
-    // SOLUTION (Challenge 4): assign distinct ranks to each crew member
-    crew_set_rank(0, RANK_COMMANDER);
-    crew_set_rank(1, RANK_PILOT);
-    crew_set_rank(2, RANK_ENGINEER);
+    printf("  [roster init]  capacity=%d (calloc)\n", crew_capacity());
+
+    /*
+     * Mission log buffer: malloc reserves uninitialized bytes.
+     * We set log_buf[0] = '\0' immediately so the buffer starts as an empty
+     * C string. malloc is used here (not calloc) to contrast with crew_init.
+     */
+    size_t log_cap = 32;
+    size_t log_len = 0;
+    char  *log_buf = malloc(log_cap);
+    if (log_buf == NULL) {
+        fprintf(stderr, "log_buf: allocation failed\n");
+        crew_free();
+        return 1;
+    }
+    log_buf[0] = '\0';
+
+    log_append(&log_buf, &log_cap, &log_len, "BOOT: Calypso online\n");
+
+    /* crew_add: appends one member; reallocs the roster when capacity is reached */
+    crew_add("CHEN",    RANK_COMMANDER, 101, ASSIGN_FLIGHT);
+    log_append(&log_buf, &log_cap, &log_len, "CREW: CHEN loaded\n");
+
+    crew_add("VASQUEZ", RANK_PILOT,     102, ASSIGN_FLIGHT);
+    log_append(&log_buf, &log_cap, &log_len, "CREW: VASQUEZ loaded\n");
+
+    /* loaded==capacity (2==2): crew_add reallocs to 4 before inserting PARK */
+    crew_add("PARK",    RANK_ENGINEER,  103, ASSIGN_FLIGHT);
+    log_append(&log_buf, &log_cap, &log_len, "CREW: PARK loaded\n");
+
+    printf("  [after 3 crew] capacity=%d (realloc: 2 -> 4)\n\n", crew_capacity());
 
     printf("--- Crew Identification ---\n");
 
@@ -264,6 +315,29 @@ int main(void) {
     printf("After rank update (ptr) :\n");
     crew_print_member(crew_get_member(2));
     printf("\n");
+
+    /* --- Docking transfer ------------------------------------------------- */
+    /*
+     * Simulates additional crew boarding during a docking manoeuvre.
+     * 3 loaded / 4 capacity before transfer.
+     * OKAFOR fills the last slot (no realloc).
+     * PETROV: loaded==capacity (4==4) -- crew_add reallocs to 8 before inserting.
+     */
+    printf("--- Docking Transfer ---\n");
+    printf("  Before: %d loaded / %d capacity\n", crew_count(), crew_capacity());
+
+    crew_add("OKAFOR", RANK_SCIENTIST, 104, ASSIGN_SCIENCE);
+    log_append(&log_buf, &log_cap, &log_len, "DOCK: OKAFOR transferred aboard\n");
+
+    crew_add("PETROV",  RANK_MEDIC,     105, ASSIGN_MEDICAL);
+    log_append(&log_buf, &log_cap, &log_len, "DOCK: PETROV transferred aboard\n");
+
+    printf("  After:  %d loaded / %d capacity (realloc: 4 -> 8)\n\n",
+           crew_count(), crew_capacity());
+
+    printf("--- Mission Log ---\n");
+    printf("  buffer: %zu bytes capacity | %zu bytes used\n", log_cap, log_len);
+    printf("%s\n", log_buf);
 
     /* --- Spacecraft record ----------------------------------------------- */
     /*
@@ -454,6 +528,9 @@ int main(void) {
     }
 
     printf("\nCalypso offline.\n");
+    /* every allocation has exactly one matching free */
+    free(log_buf); log_buf = NULL;
+    crew_free();
     return 0; // NOTE: normal-quit path -- execution does not reach emergency_shutdown label below
 
 emergency_shutdown:
@@ -462,5 +539,7 @@ emergency_shutdown:
     printf("ENGINE_CTRL cleared    : 0x%08" PRIX32 "\n", engine_get_ctrl());
     printf("ENGINE_STATUS          : 0x%08" PRIX32 "\n", engine_get_status());
     printf("Calypso offline.\n");
+    free(log_buf); log_buf = NULL;
+    crew_free();
     return 0;
 }
