@@ -1,16 +1,14 @@
-# Phase README — Crew records
+# Phase README — Dynamic crew roster
 
-> **Phase 12 — Structs and user-defined types** | Calypso · Core C
+> **Phase 13 — Dynamic memory management** | Calypso · Core C
 
-Grouping related fields into a named type — replacing three parallel arrays with a single `crew_member_t` struct that keeps every crew member's data together.
+Replacing the compile-time crew array with a heap-allocated roster that can grow mid-mission — and taking on full manual responsibility for every byte allocated.
 
-The Phase 11 crew module worked, but it was structurally fragile. Three separate arrays — `names[MAX_CREW][MAX_NAME_LEN]`, `ranks[MAX_CREW]`, and `ids[MAX_CREW]` — referred to the same crew member by index convention. There was no type in the codebase that said "this is a crew member." Any function that updated one array without touching the others would silently break the manifest, and the compiler had no way to detect the mismatch. Adding a new data field — say, a crew assignment — meant a fourth parallel array and changes to every function that iterated the roster.
+The Phase 12 crew roster uses a fixed `crew_member_t crew[MAX_CREW]` array. `MAX_CREW` is a compile-time constant, and no matter how much available RAM the system has, the roster can never hold more entries without recompiling the binary. For an interplanetary shuttle that may take on additional crew during a docking manoeuvre, that is an operational constraint, not just a code style choice.
 
-C's `struct` solves this directly. A `struct` bundles variables of different types into a single named type. `crew_member_t` holds a name, a rank, an ID, and an assignment together in one object. A `crew_member_t crew[MAX_CREW]` array can only have one index per person — the index drift that was invisible with parallel arrays is impossible with a struct array because there is only one record per slot.
+C's answer is dynamic memory: `malloc` allocates a block of heap memory at runtime, `realloc` resizes it when capacity is exceeded, and `free` releases it when it is no longer needed. There is no garbage collector, no destructor, no reference counter — you allocate, you resize, you free. The discipline is total and the compiler does not help. A missing `free` is a memory leak; a `free` followed by a use is undefined behaviour; a stale pointer after `realloc` moves the block is undefined behaviour. This phase introduces all three so you can recognise and reason about each.
 
-This phase also introduces a second struct, `spacecraft_t`, to show that struct composition scales: mission state and sensor readings can be grouped into a single object and passed around the codebase as one argument rather than five.
-
-> **A note on scope.** Dynamic allocation for a variable-length crew roster — so the roster can grow at runtime — is Phase 13. This phase works with a fixed `crew_member_t crew[MAX_CREW]` array declared at compile time.
+> **A note on scope.** `volatile` qualifiers for hardware registers and struct bitfields for register layout mapping are Phase 14. This phase stays focused on heap allocation, `NULL` checks, and the before/after of replacing a fixed array with a resizable buffer.
 
 ---
 
@@ -46,8 +44,8 @@ This phase also introduces a second struct, `spacecraft_t`, to show that struct 
 | `phase-09_arrays` | Sensor history buffers · `sizeof` element count · `array[i]` ≡ `*(array + i)` | — |
 | `phase-10_pointers` | `&` / `*` · in-place calibration · pointer arithmetic · `const T*` vs `T* const` · `**` | — |
 | `phase-11_strings` | `char` arrays · null terminator · `strncpy` / `strcmp` / `strlen` / `strncat` · literal vs mutable | — |
-| `📌 phase-12_structs` | **`crew_member_t` · `spacecraft_t` · dot / arrow notation · nested structs · array of structs** | — |
-| `phase-13_dynamic-memory` | `malloc` / `realloc` / `free` · dynamic crew roster · `NULL` checks | — |
+| `phase-12_structs` | `crew_member_t` · `spacecraft_t` · dot / arrow notation · nested structs · array of structs | — |
+| `📌 phase-13_dynamic-memory` | **`malloc` / `realloc` / `free` · dynamic crew roster · `NULL` checks · mission log buffer** | — |
 | `phase-14_embedded-patterns` | `volatile` · memory-mapped I/O pointer · struct bitfields · `const` ROM data | Hardware abstraction |
 | `phase-15_preprocessor` | `#define` constants · include guards · `#ifdef DEBUG_TELEMETRY` · function-like macro | — |
 | `phase-16_file-io` | `fopen` / `fprintf` / `fwrite` · `calypso.log` · binary checkpoint | — |
@@ -67,98 +65,85 @@ git log --oneline          # find the SOLUTION commit hash
 git show <hash>            # inspect the solution in isolation
 ```
 
-### Challenge 1 — When `strncpy` leaves `dest` unterminated
+### Challenge 1 — Struct padding and alignment
 
-`strncpy(dest, src, n)` leaves `dest` without a null terminator when `src` contains at least `n` bytes before its own `'\0'`. In that case, `strncpy` copies exactly `n` bytes from `src` and stops — it fills the buffer but never writes the terminator. Any subsequent `strlen`, `strcmp`, or `printf("%s")` call on `dest` will read past the end of the array until it finds a `'\0'` somewhere in memory, which is undefined behaviour. `crew_set_name()` prevents this by always writing `names[idx][MAX_NAME_LEN - 1] = '\0'` after the `strncpy` call, regardless of source length.
+`sizeof(crew_member_t)` may exceed the sum of its field sizes because the compiler inserts padding bytes between fields to ensure each field starts at an address divisible by its size. In `crew_member_t`, the likely insertion point is between `id` (`uint8_t`, 1 byte) and `assignment` (`CrewAssignment`, typically 4 bytes as an `int`-sized enum): the compiler may add 3 padding bytes after `id` so that `assignment` starts on a 4-byte boundary. You can check for padding by comparing `sizeof(crew_member_t)` against `MAX_NAME_LEN + sizeof(CrewRank) + sizeof(uint8_t) + sizeof(CrewAssignment)` at runtime with `printf`.
 
-### Challenge 2 — `strcmp` and case sensitivity
+### Challenge 2 — By-value vs by-pointer, tracing caller state
 
-`strcmp("COMMANDER", "commander")` returns a non-zero value — the two strings are not equal. `strcmp` compares bytes numerically: uppercase `'C'` is ASCII 67, lowercase `'c'` is ASCII 99; the first character already differs, so the function returns a negative value. To match names regardless of case you would normalise both strings before comparing — for example, calling `tolower()` on each character in turn while walking both arrays. The stored names would remain unchanged; only the comparison logic would use lowercased copies.
+`crew_print_member` receives `crew_member_t m` by value — the compiler copies every field of the caller's struct into `m` before the function body runs. Any write to `m` inside the function, such as `m.rank = RANK_COMMANDER`, modifies only that local copy; when the function returns, the copy is discarded and the caller's struct is unchanged. `crew_reassign` receives `crew_member_t *m` — the caller's address, not a copy. Writing `m->assignment = new_assignment` reaches through the pointer and modifies the original. If `spacecraft_print_status` were changed to set `sc->fuel = 0` before printing, `sc.fuel` in `main.c` would be `0` after the call — because `sc` was passed as `&sc`, so `sc->fuel = 0` writes into the caller's own variable.
 
-### Challenge 3 — `strlen` count vs array size
+### Challenge 3 — What the refactor changed structurally
 
-`strlen("CALYPSO-7")` returns 9 — it counts the 9 printable characters up to but not including the null terminator. `char mission_id[] = "CALYPSO-7"` occupies 10 bytes on the stack: 9 character bytes plus the `'\0'` that the compiler appends automatically. `strlen` deliberately excludes the terminator from its count because the terminator is an implementation detail of the C string convention, not part of the visible text. This one-byte gap is why buffer calculations always use `sizeof(array) - 1` or `MAX_NAME_LEN - 1` when computing the maximum number of printable characters a buffer can hold.
+The comparison logic — `strcmp(crew[i].name, name) == 0` — is identical to the Phase 11 version. What the refactor changed is what cannot happen: with parallel arrays, nothing prevented code from updating `names[i]` without updating `ranks[i]`, because they were separate arrays related only by index convention. With the struct array, `crew[i].name` and `crew[i].rank` are always part of the same record. There is no way to iterate or modify the name field of slot `i` without having access to the same object that holds slot `i`'s rank — the coupling is structural, not conventional.
 
-### Thought piece 1 — Parallel arrays and the risk of index drift
+### Thought piece 1 — `MAX_CREW` compile-time limit
 
-The risk is invisible coupling: every function that reads or writes the roster must keep all three arrays in sync by index, enforced only by convention. The compiler cannot detect when `names[2]` is updated without a matching update to `ranks[2]`. Adding a fourth field — say, a crew assignment — means a fourth array and changes to `crew_init()`, every `crew_set_*` function, and every print or iteration loop. C's `struct` fixes this: a `crew_member_t` that bundles name, rank, and ID into one type means there is exactly one object per crew member and one index per slot. Field drift becomes structurally impossible.
+If a docking manoeuvre pushed crew count above `MAX_CREW`, the roster would have no slot to write into. The best the code could do is reject the transfer silently or detect the overflow and print an error — but without a recompile, there is no room. Dynamic allocation solves this: instead of a fixed-size array, `malloc` a block large enough for an initial capacity, and when that capacity is exceeded, call `realloc` to grow the block to fit the new count.
 
-### Thought piece 2 — Passing a crew member as a single argument
+### Thought piece 2 — The risk of freeing a slot
 
-With the current parallel arrays, you pass name, rank, and ID as three separate arguments wherever a function needs to describe one person. With a `crew_member_t` struct you write `void comms_broadcast(crew_member_t member)` and the caller passes `crew[i]` as a single value — the compiler copies all fields automatically. If the function needs to modify the original rather than a copy, you pass a pointer instead: `void comms_update(crew_member_t *member)` and use `member->rank = RANK_COMMANDER` inside the function.
+When you `free` a pointer, the memory is returned to the heap. The pointer variable itself still holds the old address — it is now a dangling pointer. Any read or write through that pointer after the `free` is undefined behaviour: the memory may have been reallocated for a different purpose, so you might read someone else's data, corrupt an allocation header, or crash. The fix is to set the pointer to `NULL` immediately after `free` so that any accidental later dereference fails visibly rather than silently.
 
-### Thought piece 3 — Preventing index drift
+### Thought piece 3 — Stale pointer after `realloc`
 
-Replacing the three parallel arrays with a single `crew_member_t crew[MAX_CREW]` array makes the drift structurally impossible. There is only one index per person: `crew[i].name`, `crew[i].rank`, and `crew[i].id` are all fields of the same object at the same index. A function that updates `crew[i].rank` without touching `crew[i].name` is perfectly fine — they are both part of the same record. The compiler enforces that every `crew_member_t` has all its fields; you can never have a rank without a name slot.
+If `realloc` cannot extend the existing block in place, it allocates a new, larger block, copies the old contents, and frees the original. The old pointer now points at freed memory — using it is a use-after-free, which is undefined behaviour. The safe pattern is to assign the `realloc` return value to a temporary: `crew_member_t *tmp = realloc(roster, new_size)`. If `tmp` is not `NULL`, assign it back to `roster`; if it is `NULL`, the reallocation failed and `roster` is still valid. Assigning the `realloc` return directly to `roster` would lose the original pointer on failure.
 
 ---
 
 ## 💡 Why we made this decision
 
-### Parallel arrays have no structural relationship
+### A fixed array cannot grow
 
-The three arrays in Phase 11 — `names`, `ranks`, `ids` — were related only by the agreement that index `i` means the same crew member in all three. That agreement lived in comments and in the programmer's head. Nothing prevented `crew_set_name(0, "CHEN")` and `crew_set_rank(1, RANK_COMMANDER)` from running in the wrong order and silently corrupting the manifest. Every function that iterated the roster had to touch all three arrays consistently.
+The Phase 12 roster is `static crew_member_t crew[MAX_CREW]` — six slots, always, determined at compile time. The array sits in the program's BSS segment; its size is baked into the binary. There is no mechanism to add a seventh slot at runtime short of recompiling. For a flight computer that may receive crew during a mid-mission docking, this is a hard operational limit.
 
-A `struct` moves that relationship into the type system. Once `crew_member_t` exists, the question "what fields does a crew member have?" has a single authoritative answer that the compiler enforces. Adding a new field means editing the struct definition once — every existing `crew_member_t` variable automatically gains the new field.
+`malloc` lifts that limit by allocating from the heap at runtime. The heap is a pool of memory managed by the C runtime; it grows as the program requests blocks and shrinks as blocks are freed. Calypso can start with a roster sized for the pre-launch crew and grow it — without a recompile — when a docking transfer adds members.
 
 ```mermaid
-flowchart LR
-    subgraph parallel["Phase 11 — parallel arrays"]
-        direction TB
-        N["names[MAX_CREW][MAX_NAME_LEN]"]
-        R["ranks[MAX_CREW]"]
-        I["ids[MAX_CREW]"]
-        A["assignment[MAX_CREW]  ← new field: new array + changes everywhere"]
-    end
-    subgraph struct_array["Phase 12 — struct array"]
-        direction TB
-        C["crew[MAX_CREW]
-crew[i].name
-crew[i].rank
-crew[i].id
-crew[i].assignment  ← new field: one line in the struct"]
-    end
-    parallel -->|"refactor"| struct_array
+flowchart TD
+    A["Phase 12: crew[MAX_CREW] — BSS segment\nsize fixed at compile time"] -->|"crew transfer exceeds MAX_CREW"| B["no room — transfer rejected or undefined"]
+    C["Phase 13: crew_member_t *roster — heap pointer\nsize decided at runtime"] -->|"capacity exceeded"| D["realloc: block grows or moves\nroster updated to new address"]
 ```
 
-### Dot notation vs arrow notation
+### The cost: you own every byte
 
-When you have a `crew_member_t` variable directly — `crew_member_t m` — you access its fields with a dot: `m.rank`. When you have a pointer to a struct — `crew_member_t *p` — you use arrow notation: `p->rank`. The arrow is shorthand for `(*p).rank`: dereference first, then access the field. The two forms are equivalent in meaning; the choice of notation signals whether you are working with a copy or a pointer, which determines whether modifications reach the original.
+The heap is not managed for you. Every `malloc` must be paired with exactly one `free`. A `malloc` with no `free` is a memory leak — the block is never returned to the pool. On a desktop program that exits quickly this is often harmless; on a flight computer running for days or months, small leaks compound into exhaustion. On a bare-metal embedded system with no OS-level memory reclamation, a leak is permanent.
+
+`realloc` introduces an additional hazard: if the block moves, the old pointer becomes a dangling pointer — a pointer to memory that has been freed and potentially reallocated for something else. Any access through the old pointer after `realloc` returns a new address is undefined behaviour.
+
+Neither of these is enforced by the compiler. You will not get a warning. You will not get an error. The discipline is entirely yours.
 
 ---
 
 ## ⏮️ What we built in the previous branch
 
-Phase 11 added a crew management module using three parallel arrays: `char names[MAX_CREW][MAX_NAME_LEN]`, `CrewRank ranks[MAX_CREW]`, and `uint8_t ids[MAX_CREW]`. `strncpy` handled safe name assignment with explicit null termination, `strcmp` powered crew lookup, and `strlen` measured name lengths for the manifest and comms buffer. The SOLUTION commit at the start of this branch adds `crew_set_rank()` (Challenge 4), which assigns distinct ranks to the loaded crew members, and `crew_transmit_names()` (Challenge 5 stretch), which builds a `"TX: <name>"` comms line per slot using `strncat`.
+Phase 12 replaced the three parallel arrays from Phase 11 with a single `crew_member_t crew[MAX_CREW]` struct array. `crew_member_t` bundles name, rank, ID, and assignment into one type, eliminating the index-drift risk that was invisible in the parallel-array design. The SOLUTION commit at the start of this branch adds `crew_find_by_id()` (Challenge 4), which walks the roster comparing `crew[i].id` with the target, and `crew_update_rank()` (Challenge 5), which updates the rank field in place through a pointer using arrow notation.
 
 ---
 
 ## 🎯 What we're doing in this branch
 
-- Add a `CrewAssignment` enum (`ASSIGN_FLIGHT`, `ASSIGN_ENGINEERING`, `ASSIGN_SCIENCE`, `ASSIGN_MEDICAL`) to `crew.h`
-- Define `typedef struct { char name[MAX_NAME_LEN]; CrewRank rank; uint8_t id; CrewAssignment assignment; } crew_member_t` in `crew.h`
-- Replace the three parallel arrays in `crew.c` with `static crew_member_t crew[MAX_CREW]` and update all functions to use dot notation (`crew[i].name`, `crew[i].rank`, etc.)
-- Add `crew_print_member(crew_member_t m)` to demonstrate pass-by-value: the function prints one crew member's fields from a copy — changes inside cannot affect the caller's record
-- Add `crew_reassign(crew_member_t *m, CrewAssignment new_assignment)` to demonstrate pass-by-pointer: arrow notation writes back through the address, modifying the caller's struct directly
-- Define `typedef struct` for `position_t` (`float x_au`, `float y_au`) and `spacecraft_t` (`char shuttle_id[16]`, `enum MissionPhase phase`, `sensor_float_t velocity`, `uint16_t fuel`, `position_t position`) in `main.c`; pass `spacecraft_t` by pointer into `spacecraft_print_status()` and access fields with arrow notation
-- Use `sc.position.x_au` to demonstrate nested struct field access
+- Replace `static crew_member_t crew[MAX_CREW]` in `crew.c` with a heap-allocated `crew_member_t *roster` initialised by `malloc(initial_cap * sizeof(crew_member_t))`
+- Add `realloc` growth logic: when `loaded == capacity`, double the capacity; assign to a temporary pointer, `NULL`-check, then update `roster`
+- Add `NULL` checks on every `malloc` and `realloc` return value; print an error and exit if allocation fails
+- Free the roster with `free(roster)` at mission end — every allocation has exactly one matching free
+- Add a dynamic mission log buffer `char *log_buf` in `main.c`, grown with `realloc` as log entries accumulate, freed before exit
+- Demonstrate `calloc` for zero-initialised allocation alongside `malloc` and explain the difference
 
 ---
 
 ## 🧑🏻‍🏫 Learning goals
 
 ### Understand
-- **Explain** struct memory layout — members are stored in declaration order, and the compiler may insert padding bytes between fields to satisfy alignment requirements; `sizeof(struct)` can exceed the sum of its field sizes
+- **Explain** the difference between stack and heap allocation — lifetime, ownership, and when each is appropriate
+- **Identify** memory leaks and their consequences in long-running programs and on embedded systems where no OS reclaims memory on exit
+- **Identify** dangling pointers and the undefined behaviour they produce — both from failing to null a pointer after `free` and from a stale pointer after `realloc` moves a block
 
 ### Apply
-- **Declare** a `struct` to group related variables of different types and use `typedef struct` to give it a named alias (`crew_member_t`)
-- **Access** struct members using dot notation on a direct variable and arrow notation (`->`) on a pointer to a struct
-- **Pass** `crew_member_t` to a function by value (copy) and by pointer (in-place modification) — and explain what the caller sees after each
-- **Declare** and iterate over `crew_member_t crew[MAX_CREW]`, accessing each member's fields with dot notation
-- **Declare** nested structs (`position_t` inside `spacecraft_t`) and access inner fields through the chain: `sc.position.x_au`
-
-### Analyze
-- **Examine** the before/after diff between the parallel-array roster and the struct-array roster — identify which functions shrank, which stayed the same, and why adding a new field now requires fewer changes
+- **Allocate** memory using `malloc()`, `calloc()`, and `realloc()` and explain what each initialises
+- **Free** allocated memory with `free()` — every allocation has exactly one matching free
+- **Use** dynamic allocation to create the crew roster and log buffer at runtime
+- **Write** `NULL` checks on every `malloc`/`realloc` return value and handle the failure path explicitly
 
 ---
 
@@ -166,137 +151,78 @@ Phase 11 added a crew management module using three parallel arrays: `char names
 
 | Concept | Plain English |
 |---|---|
-| **`struct`** | A type that groups variables of different types under one name. All fields live in one contiguous block of memory. |
-| **`typedef struct`** | Gives the struct a clean alias so you can write `crew_member_t` instead of `struct crew_member_s` everywhere. |
-| **Dot notation (`.`)** | Access a field on a struct variable you hold directly: `m.rank`. |
-| **Arrow notation (`->`)**  | Access a field through a pointer to a struct: `p->rank`, shorthand for `(*p).rank`. |
-| **Pass by value** | The function receives a copy of the struct. Modifications inside the function do not reach the caller's variable. |
-| **Pass by pointer** | The function receives the address of the struct. Modifications through `->` write directly to the caller's variable. |
-| **Nested struct** | A struct whose field is itself a struct. Access the inner field with a chain of dots: `sc.position.x_au`. |
-| **Struct array** | An array where every element is a struct: `crew_member_t crew[MAX_CREW]`. One index, all fields. |
-| **Alignment and padding** | The compiler may insert unused bytes between struct fields so each field starts at an address that matches its size. `sizeof(struct)` can be larger than the sum of its fields. |
+| **Heap** | A pool of memory the program can request at runtime — larger and longer-lived than the stack, but manually managed with no automatic cleanup. |
+| **`malloc(n)`** | Allocates `n` bytes on the heap. Returns a pointer to the block, or `NULL` on failure. The memory is uninitialised — contains whatever was there before. |
+| **`calloc(count, size)`** | Allocates `count * size` bytes and zeroes every byte before returning. Slower than `malloc` but safe when you need a clean starting state. |
+| **`realloc(ptr, new_size)`** | Resizes a block. May extend in place or allocate a new block, copy the old contents, and free the original. Returns the new address, which may differ from `ptr`. |
+| **`free(ptr)`** | Returns the block to the heap. The pointer variable still holds the old address — set it to `NULL` immediately after to prevent accidental reuse. |
+| **`NULL` check** | Every `malloc`/`realloc` can fail and return `NULL`. Dereferencing a `NULL` pointer is undefined behaviour — always check before using the returned pointer. |
+| **Memory leak** | An allocation with no matching `free`. The block is never returned to the heap; available memory shrinks until the program exhausts it or exits. |
+| **Dangling pointer** | A pointer that still holds an address after the memory at that address has been freed. Reading or writing through it is undefined behaviour. |
+| **Stale pointer after `realloc`** | If `realloc` moves the block, the old pointer is now a dangling pointer. Always use `realloc`'s return value, not the original pointer, after the call. |
+
+```mermaid
+flowchart LR
+    M["malloc / calloc\nreturns pointer or NULL"] --> NC1["NULL check"]
+    NC1 -->|"NULL"| E1["print error, exit"]
+    NC1 -->|"valid"| U["use pointer"]
+    U --> R["realloc when full\ntmp = realloc(ptr, new_size)"]
+    R --> NC2["NULL check tmp"]
+    NC2 -->|"NULL"| E2["original ptr still valid\nhandle error"]
+    NC2 -->|"valid"| U2["ptr = tmp; continue"]
+    U2 --> F["free(ptr) when done\nptr = NULL"]
+```
 
 ---
 
 ## 🔍 What to notice in the code
 
-**[`crew.h:27–33`](crew.h#L27)**
-The `crew_member_t` typedef struct definition. All four fields — name, rank, id, assignment — are declared in one block. The comment above explains what this replaces: three parallel arrays where index `i` meant the same person by convention. Now there is no convention to enforce; the struct enforces it by construction.
+**[`crew.c`](crew.c)**
+_Placeholder — to be completed after code is written._
 
-**[`crew.c:13–14`](crew.c#L13)**
-The declaration that replaces the three parallel arrays from Phase 11. `static crew_member_t crew[MAX_CREW]` is one array of six structs — one record per slot, all fields always together. Compare the Phase 11 declaration (`static char names[...][...]`, `static CrewRank ranks[...]`, `static uint8_t ids[...]`) with these two lines to see the structural change.
-
-**[`crew.c:45–51`](crew.c#L45)**
-`crew_init` using dot notation. `crew[i].name`, `crew[i].rank`, `crew[i].id`, and `crew[i].assignment` are accessed with a dot because `crew[i]` is a value (a struct element), not a pointer. The `strncpy` + explicit null-termination pattern is identical to Phase 11 — the field is still a `char` array; the struct wrapper does not change how string functions work on it.
-
-**[`crew.c:122–134`](crew.c#L122)**
-`crew_print_member` receives `crew_member_t m` by value. The comment explains the consequence: any modification to `m` inside the function — say, `m.rank = RANK_MEDIC` — would affect only the local copy and would be discarded when the function returns. Compare this with `crew_reassign` directly below.
-
-**[`crew.c:144–153`](crew.c#L144)**
-`crew_reassign` receives `crew_member_t *m` by pointer. The comment explains the arrow notation: `m->assignment = new_assignment` is shorthand for `(*m).assignment = new_assignment` — dereference first, then access the field. This writes directly into the caller's struct, so the change persists after the function returns. In `main.c`, [line 247](main.c#L247) calls this and the next `crew_print_member` confirms the assignment changed in the live roster.
-
-**[`main.c:20–38`](main.c#L20)**
-The `position_t` and `spacecraft_t` typedef struct definitions at file scope, above `main()`. `position_t` is a nested struct — it is a field type, not a standalone variable. `spacecraft_t` has a `position_t position` member, so `sc.position` accesses the nested struct and `sc.position.x_au` drills one level further with a second dot.
-
-**[`main.c:45–57`](main.c#L45)**
-`spacecraft_print_status` receives `spacecraft_t *sc` by pointer. Every field access uses arrow notation: `sc->shuttle_id`, `sc->velocity`, `sc->position.x_au`. The last one mixes arrow and dot — arrow to reach the struct through the pointer, then dot to reach the nested field inside that struct. No copy of `spacecraft_t` is made; the function reads directly through the pointer.
-
-**[`main.c:260–273`](main.c#L260)**
-The spacecraft demo block in `main()`. `sc` is initialised with dot notation (`sc.phase = PREFLIGHT`, `sc.position.x_au = 1.000f`). `spacecraft_print_status(&sc)` passes the address — inside the function, all the same fields are read with arrow notation. This is the single-point demo of the dot-vs-arrow distinction.
+**[`main.c`](main.c)**
+_Placeholder — to be completed after code is written._
 
 ---
 
 ## ▶️ Running this branch
 
-**Prerequisites:** GCC or Clang (C99+) and CMake 3.10+, or just GCC/Clang on its own.
-
-**With CMake (recommended):**
-```bash
-cmake -B build
-cmake --build build
-.\build\Debug\calypso.exe   # Windows (MSVC)
-.\build\calypso.exe         # Windows (MinGW)
-./build/calypso             # Linux / macOS
-```
-
-**Direct compilation (no CMake):**
-```bash
-gcc -std=c99 main.c sensors.c engine.c navigation.c crew.c -o calypso
-./calypso
-```
-
-After the engine control section, the crew identification block now shows:
-
-```
---- Crew Identification ---
-Comms transmission      : COMMS: CHEN
-Lookup 'PARK'           : slot 2
-Lookup 'UNKNOWN_CREW'   : slot -1 (not found)
-Print member (by value) :
-  [101] CDR    FLIGHT    CHEN
-After reassign (by ptr) :
-  [101] CDR    SCI       CHEN
-```
-
-Followed by the spacecraft record:
-
-```
---- Spacecraft Record ---
-  Shuttle       : CALYPSO-7
-  Phase         : PREFLIGHT
-  Velocity      : 32.70 km/s
-  Fuel          : 950 kg
-  Position      : (1.000, 0.000) AU
-```
-
-| Command | Action |
-|---|---|
-| `n` | Advance mission phase |
-| `s` | Sensor scan — history, averages, drift, channel reconfiguration |
-| `m` | Print crew manifest with ranks, assignments, and `crew_transmit_names` output |
-| `e` | Emergency shutdown via `goto` |
-| `q` | Normal quit |
-
-**Expected output — `m` command:**
-```
---- Crew Manifest (3 / 6 slots) ---
-  [101] CDR    SCI       CHEN                     (4 chars)
-  [102] PLT    FLIGHT    VASQUEZ                  (7 chars)
-  [103] ENG    FLIGHT    PARK                     (4 chars)
-  TX: CHEN  (payload=4 bytes)
-  TX: VASQUEZ  (payload=7 bytes)
-  TX: PARK  (payload=4 bytes)
-Comms line              : TX[CHEN]  (len=8)
-```
+_Placeholder — to be completed after code is written._
 
 ---
 
 ## ✏️ Challenges for students
 
 **Challenge 1 — Analytical**
-`sizeof(crew_member_t)` may not equal `MAX_NAME_LEN + sizeof(CrewRank) + sizeof(uint8_t) + sizeof(CrewAssignment)`. What causes the discrepancy? On which field boundary is padding most likely to be inserted, and why? How could you check whether padding is present without reading compiler documentation?
+`malloc` returns uninitialised memory — the bytes contain whatever was previously at that address. `calloc` zeroes the block before returning. For the crew roster, does it matter which one you use? What would happen if you read `roster[0].name` immediately after a `malloc` call without calling `crew_init` first? Would `calloc` prevent that problem, and if so, how?
 
 **Challenge 2 — Analytical**
-Look at `crew_print_member` ([`crew.c:122`](crew.c#L122)) and `crew_reassign` ([`crew.c:144`](crew.c#L144)). Both operate on a `crew_member_t`, but one receives it by value and the other by pointer. Trace what happens to the caller's struct in `main.c` after each returns. Then predict: if `spacecraft_print_status` were changed to set `sc->fuel = 0` before printing, what would `sc.fuel` be in `main.c` after the call — and why?
+The safe `realloc` pattern uses a temporary pointer:
+```c
+crew_member_t *tmp = realloc(roster, new_size);
+if (tmp == NULL) { /* handle failure — roster still valid */ }
+else { roster = tmp; }
+```
+What goes wrong if you write `roster = realloc(roster, new_size)` instead? Trace what happens to the original block if `realloc` returns `NULL` in that version.
 
 **Challenge 3 — Analytical**
-The `crew_find_by_name()` function now calls `strcmp(crew[i].name, name)` instead of `strcmp(names[i], name)`. The string comparison logic is identical. What did the refactor change structurally — and what does the new form make impossible that the parallel-array form allowed?
+After `free(roster)`, the code sets `roster = NULL`. Why? What happens if it does not, and a function later calls `crew_add()` — which checks `if (loaded == capacity)` before trying to `realloc` — without `roster` being reassigned first?
 
 **Challenge 4 — Additive**
-Add `int crew_find_by_id(uint8_t id)` to `crew.c` and `crew.h`. It should walk the roster using `crew[i].id == id` and return the slot index, or -1 if not found. Call it from `main.c` to look up crew member 102 and print the result. This follows the same pattern as `crew_find_by_name` but accesses a different field with dot notation.
+Add `void crew_shrink(void)` to `crew.c` and `crew.h`. When called, it should `realloc` the roster down to exactly `loaded` slots — releasing any unused capacity. Use the safe temporary-pointer pattern and a `NULL` check. Call it from `main.c` after a crew member is added, then print `capacity` before and after to confirm the shrink.
 
 **Challenge 5 — Additive (stretch)**
-Add `void crew_update_rank(crew_member_t *m, CrewRank new_rank)` to `crew.c` and `crew.h`. It should update the rank field through the pointer using arrow notation (`m->rank = new_rank`). Call it from `main.c` using `crew_get_member_ptr(2)` to promote PARK from `RANK_ENGINEER` to `RANK_PILOT`, then call `crew_print_member(crew_get_member(2))` to confirm the change is reflected in the live roster. Add a comment explaining why the pointer parameter is required here.
+The mission log buffer is grown with `realloc` each time a new entry is appended. Write a `log_append(char **log_buf, size_t *log_cap, size_t *log_len, const char *entry)` function that checks whether the next entry fits in the current capacity, doubles the buffer with `realloc` if not, and appends the entry with `strncat`. Free the buffer before `return 0` in `main.c`. This combines dynamic allocation, string handling, and the safe `realloc` pattern in one exercise.
 
 ---
 
 ## 💭 Thought pieces for the next branch
 
-1. `MAX_CREW` is a compile-time constant baked into the array declaration. Even if the shuttle can physically accommodate more crew mid-mission, the roster can never grow beyond `MAX_CREW` without a recompile. What if a docking manoeuvre transferred additional crew members above that limit?
-2. When a crew member disembarks, we overwrite their slot with a blank record. If the array were dynamically allocated, we might `free` that slot's memory instead — but what risk does that create with the pointer we just freed?
-3. `realloc` can resize an allocation — but if it moves the block to a new address, the original pointer is now invalid. What kind of error results from using that old pointer after `realloc` has moved the memory?
+1. `ENGINE_CTRL` is a plain `uint32_t`. The compiler may legally cache it in a CPU register between reads — on real hardware that means we would silently miss updates from the peripheral. How do we prevent the compiler from doing that?
+2. On a real MCU, hardware peripherals live at fixed memory addresses — say `0x40020000`. How does C give us access to the value at an arbitrary address?
+3. We have been using `malloc` freely. On a bare-metal embedded system with no OS, is `malloc` available? Even if it is, what are the risks of using it there?
 
 ---
 
-*Previous branch: [`phase-11_strings`]*
-*Next branch: [`phase-13_dynamic-memory`]*
+*Previous branch: [`phase-12_structs`]*
+*Next branch: [`phase-14_embedded-patterns`]*
