@@ -98,3 +98,6 @@ void           crew_reassign(crew_member_t *m, CrewAssignment new_assignment);
  * A by-value parameter would discard the change when the function returns.
  */
 void           crew_update_rank(crew_member_t *m, CrewRank new_rank);
+
+/* SOLUTION (Challenge 4): shrink the roster to exactly loaded slots, releasing unused capacity. */
+void           crew_shrink(void);

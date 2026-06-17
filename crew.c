@@ -186,3 +186,15 @@ void crew_update_rank(crew_member_t *m, CrewRank new_rank) {
     if (m == NULL) return;
     m->rank = new_rank;
 }
+
+/* SOLUTION (Challenge 4): realloc the roster down to exactly loaded slots */
+void crew_shrink(void) {
+    if (loaded == 0 || loaded == capacity) return;
+    crew_member_t *tmp = realloc(roster, (size_t)loaded * sizeof(crew_member_t));
+    if (tmp == NULL) {
+        fprintf(stderr, "crew_shrink: realloc failed\n");
+        return;
+    }
+    roster   = tmp;
+    capacity = loaded;
+}

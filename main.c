@@ -58,7 +58,7 @@ static void spacecraft_print_status(spacecraft_t *sc) {
 }
 
 /*
- * log_append: append entry to a dynamically-sized string buffer.
+ * SOLUTION (Challenge 5): append entry to a dynamically-sized string buffer.
  * Doubles the buffer with realloc whenever the entry would not fit.
  * Safe realloc pattern: assigns to tmp first; on failure, *buf remains valid.
  */
@@ -334,6 +334,11 @@ int main(void) {
 
     printf("  After:  %d loaded / %d capacity (realloc: 4 -> 8)\n\n",
            crew_count(), crew_capacity());
+
+    /* SOLUTION (Challenge 4): shrink the roster to release unused capacity */
+    printf("  Shrink: %d capacity", crew_capacity());
+    crew_shrink();
+    printf(" -> %d capacity (realloc: 8 -> 5)\n\n", crew_capacity());
 
     printf("--- Mission Log ---\n");
     printf("  buffer: %zu bytes capacity | %zu bytes used\n", log_cap, log_len);
