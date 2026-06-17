@@ -283,7 +283,7 @@ int main(void) {
     printf("Lookup 'UNKNOWN_CREW'   : slot %d (not found)\n", found);
 
     /*
-     * crew_get_member returns a copy by value -- crew[0]'s fields are copied
+     * crew_get_member returns a copy by value -- roster[0]'s fields are copied
      * into m. crew_print_member prints from m; any change inside that function
      * to m would not affect the roster.
      */
@@ -291,7 +291,7 @@ int main(void) {
     crew_print_member(crew_get_member(0));
 
     /*
-     * crew_get_member_ptr returns &crew[0] -- the address of the live slot.
+     * crew_get_member_ptr returns &roster[0] -- the address of the live slot.
      * crew_reassign writes through the pointer (m->assignment = ...), so
      * the change is visible in the roster after the function returns.
      */
