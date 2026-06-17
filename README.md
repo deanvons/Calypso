@@ -1,14 +1,14 @@
-# Phase README — Dynamic crew roster
+# Phase README — Embedded hardware layer
 
-> **Phase 13 — Dynamic memory management** | Calypso · Core C
+> **Phase 14 — Embedded C patterns** | Calypso · Core C
 
-Replacing the compile-time crew array with a heap-allocated roster that can grow mid-mission — and taking on full manual responsibility for every byte allocated.
+Adding `volatile`, memory-mapped I/O pointer declarations, struct bitfields for register layout mapping, and `const` ROM data — the patterns that make C correct for hardware peripherals.
 
-The Phase 12 crew roster uses a fixed `crew_member_t crew[MAX_CREW]` array. `MAX_CREW` is a compile-time constant, and no matter how much available RAM the system has, the roster can never hold more entries without recompiling the binary. For an interplanetary shuttle that may take on additional crew during a docking manoeuvre, that is an operational constraint, not just a code style choice.
+The engine register `ENGINE_CTRL` has been a plain `uint32_t` variable since Phase 6. That works correctly in the simulation because only this program reads and writes it. On real hardware, the situation is different: the engine peripheral controller can update the physical register independently of the CPU running this code. The compiler has no way to know that — nothing in the C code indicates that anyone other than the program touches `ENGINE_CTRL` — so it is legally allowed to keep the last-read value in a CPU register and skip re-reading memory on subsequent accesses. On real hardware, that means the program can miss a peripheral update entirely. The fix is a single keyword: `volatile`.
 
-C's answer is dynamic memory: `malloc` allocates a block of heap memory at runtime, `realloc` resizes it when capacity is exceeded, and `free` releases it when it is no longer needed. There is no garbage collector, no destructor, no reference counter — you allocate, you resize, you free. The discipline is total and the compiler does not help. A missing `free` is a memory leak; a `free` followed by a use is undefined behaviour; a stale pointer after `realloc` moves the block is undefined behaviour. This phase introduces all three so you can recognise and reason about each.
+This phase also introduces the two patterns that go alongside `volatile` in embedded C: the memory-mapped I/O pointer — a `volatile` pointer cast from a fixed integer address, giving C direct access to a hardware peripheral at a known physical location — and struct bitfields, which replace the shift-and-mask sequences from Phase 6 with named fields that mirror the hardware register layout directly in the struct definition.
 
-> **A note on scope.** `volatile` qualifiers for hardware registers and struct bitfields for register layout mapping are Phase 14. This phase stays focused on heap allocation, `NULL` checks, and the before/after of replacing a fixed array with a resizable buffer.
+> **A note on scope.** Calypso runs on a desktop, not a microcontroller. The `volatile` qualifier and the MMIO pointer are demonstrated structurally — you will see the correct declarations and the reasoning behind them — but you are not observing the actual compiler caching behaviour they guard against. That behaviour is an optimisation decision made per compiler, per target, per optimisation level. What you will see is the correct form of every declaration and the rules that govern each.
 
 ---
 
@@ -19,6 +19,7 @@ C's answer is dynamic memory: `malloc` allocates a block of heap memory at runti
 - [Why we made this decision](#-why-we-made-this-decision)
 - [What we built in the previous branch](#-what-we-built-in-the-previous-branch)
 - [What we're doing in this branch](#-what-were-doing-in-this-branch)
+- [The abstraction we earned](#-the-abstraction-we-earned)
 - [Learning goals](#-learning-goals)
 - [Key concepts](#-key-concepts)
 - [What to notice in the code](#-what-to-notice-in-the-code)
@@ -45,8 +46,8 @@ C's answer is dynamic memory: `malloc` allocates a block of heap memory at runti
 | `phase-10_pointers` | `&` / `*` · in-place calibration · pointer arithmetic · `const T*` vs `T* const` · `**` | — |
 | `phase-11_strings` | `char` arrays · null terminator · `strncpy` / `strcmp` / `strlen` / `strncat` · literal vs mutable | — |
 | `phase-12_structs` | `crew_member_t` · `spacecraft_t` · dot / arrow notation · nested structs · array of structs | — |
-| `📌 phase-13_dynamic-memory` | **`malloc` / `realloc` / `free` · dynamic crew roster · `NULL` checks · mission log buffer** | — |
-| `phase-14_embedded-patterns` | `volatile` · memory-mapped I/O pointer · struct bitfields · `const` ROM data | Hardware abstraction |
+| `phase-13_dynamic-memory` | `malloc` / `realloc` / `free` · dynamic crew roster · `NULL` checks · mission log buffer | — |
+| `📌 phase-14_embedded-patterns` | **`volatile` · memory-mapped I/O pointer · struct bitfields · `const` ROM data** | Hardware abstraction |
 | `phase-15_preprocessor` | `#define` constants · include guards · `#ifdef DEBUG_TELEMETRY` · function-like macro | — |
 | `phase-16_file-io` | `fopen` / `fprintf` / `fwrite` · `calypso.log` · binary checkpoint | — |
 
@@ -65,85 +66,132 @@ git log --oneline          # find the SOLUTION commit hash
 git show <hash>            # inspect the solution in isolation
 ```
 
-### Challenge 1 — Struct padding and alignment
+### Challenge 1 — `malloc` vs `calloc` for the roster
 
-`sizeof(crew_member_t)` may exceed the sum of its field sizes because the compiler inserts padding bytes between fields to ensure each field starts at an address divisible by its size. In `crew_member_t`, the likely insertion point is between `id` (`uint8_t`, 1 byte) and `assignment` (`CrewAssignment`, typically 4 bytes as an `int`-sized enum): the compiler may add 3 padding bytes after `id` so that `assignment` starts on a 4-byte boundary. You can check for padding by comparing `sizeof(crew_member_t)` against `MAX_NAME_LEN + sizeof(CrewRank) + sizeof(uint8_t) + sizeof(CrewAssignment)` at runtime with `printf`.
+`malloc` returns uninitialised memory — the bytes contain whatever was previously at that address. If you read `roster[0].name` immediately after a raw `malloc` call without calling `crew_init`, you would be reading garbage bytes from the heap. It might look like a valid string if the first byte happened to be `'\0'`, or it might print garbage characters until finding a `'\0'` somewhere else in the heap — undefined behaviour with unpredictable output. `calloc` prevents this by zeroing every byte before returning, so `roster[0].name[0]` is always `'\0'` — a valid empty C string — before the first `crew_add` call. For the crew roster, that guarantee matters: every slot is in a known clean state without an explicit initialisation loop.
 
-### Challenge 2 — By-value vs by-pointer, tracing caller state
+### Challenge 2 — What goes wrong with `roster = realloc(roster, new_size)` on failure
 
-`crew_print_member` receives `crew_member_t m` by value — the compiler copies every field of the caller's struct into `m` before the function body runs. Any write to `m` inside the function, such as `m.rank = RANK_COMMANDER`, modifies only that local copy; when the function returns, the copy is discarded and the caller's struct is unchanged. `crew_reassign` receives `crew_member_t *m` — the caller's address, not a copy. Writing `m->assignment = new_assignment` reaches through the pointer and modifies the original. If `spacecraft_print_status` were changed to set `sc->fuel = 0` before printing, `sc.fuel` in `main.c` would be `0` after the call — because `sc` was passed as `&sc`, so `sc->fuel = 0` writes into the caller's own variable.
+If `realloc` returns `NULL`, the original allocation is not freed — the old block is still valid and still allocated. But by assigning the `NULL` return directly to `roster`, you have overwritten the only pointer that held the old block's address. The old memory is still allocated, can never be freed, and can never be accessed: a permanent memory leak. With the safe pattern — `tmp = realloc(roster, new_size); if (tmp != NULL) { roster = tmp; }` — `roster` still holds the valid old address when `realloc` fails, the data is intact, and the function can return an error to the caller without losing any memory.
 
-### Challenge 3 — What the refactor changed structurally
+### Challenge 3 — Why set `roster = NULL` immediately after `free`
 
-The comparison logic — `strcmp(crew[i].name, name) == 0` — is identical to the Phase 11 version. What the refactor changed is what cannot happen: with parallel arrays, nothing prevented code from updating `names[i]` without updating `ranks[i]`, because they were separate arrays related only by index convention. With the struct array, `crew[i].name` and `crew[i].rank` are always part of the same record. There is no way to iterate or modify the name field of slot `i` without having access to the same object that holds slot `i`'s rank — the coupling is structural, not conventional.
+After `free(roster)`, the memory has been returned to the heap. The `roster` variable itself still holds the old address — it is now a dangling pointer. Any code that later calls `crew_add` or dereferences `roster` directly after the `free` would be accessing freed memory: undefined behaviour. Setting `roster = NULL` immediately after `free` makes any accidental later dereference fail visibly — a `NULL` dereference crashes the program at the point of the error rather than silently corrupting data or producing wrong output. It is a safety net: you cannot prevent all misuse, but you can make misuse fail loudly.
 
-### Thought piece 1 — `MAX_CREW` compile-time limit
+### Thought piece 1 — Preventing compiler caching of `ENGINE_CTRL`
 
-If a docking manoeuvre pushed crew count above `MAX_CREW`, the roster would have no slot to write into. The best the code could do is reject the transfer silently or detect the overflow and print an error — but without a recompile, there is no room. Dynamic allocation solves this: instead of a fixed-size array, `malloc` a block large enough for an initial capacity, and when that capacity is exceeded, call `realloc` to grow the block to fit the new count.
+The `volatile` keyword is the answer. Qualifying a variable `volatile` tells the compiler that its value can change at any time from outside the program's own code — a hardware peripheral, an interrupt service routine, or another execution context. The compiler must emit a memory load instruction for every access to a `volatile` variable rather than reusing a cached value held in a CPU register. Without `volatile`, a compiler optimising a loop that reads the same variable multiple times without writing to it is legally allowed to perform the read once, cache the result, and skip subsequent memory reads — which silently misses any hardware-driven change to the register.
 
-### Thought piece 2 — The risk of freeing a slot
+### Thought piece 2 — Accessing a value at an arbitrary address in C
 
-When you `free` a pointer, the memory is returned to the heap. The pointer variable itself still holds the old address — it is now a dangling pointer. Any read or write through that pointer after the `free` is undefined behaviour: the memory may have been reallocated for a different purpose, so you might read someone else's data, corrupt an allocation header, or crash. The fix is to set the pointer to `NULL` immediately after `free` so that any accidental later dereference fails visibly rather than silently.
+You cast the integer address to a pointer of the correct type:
+```c
+volatile uint32_t * const pMMIO_ENGINE_CTRL = (volatile uint32_t *)0x40020000UL;
+```
+This tells the compiler: treat the value at address `0x40020000` as a `uint32_t`. Dereferencing `*pMMIO_ENGINE_CTRL` now reads from that physical address. On a microcontroller where the engine peripheral is memory-mapped to that address, this reads the live hardware register. The `volatile` qualifier is mandatory — without it the compiler may cache the first read and skip subsequent reloads from memory. The `const` on the pointer itself means the pointer can never be reseated to a different address; only the value at that address can change.
 
-### Thought piece 3 — Stale pointer after `realloc`
+### Thought piece 3 — `malloc` on bare-metal embedded systems
 
-If `realloc` cannot extend the existing block in place, it allocates a new, larger block, copies the old contents, and frees the original. The old pointer now points at freed memory — using it is a use-after-free, which is undefined behaviour. The safe pattern is to assign the `realloc` return value to a temporary: `crew_member_t *tmp = realloc(roster, new_size)`. If `tmp` is not `NULL`, assign it back to `roster`; if it is `NULL`, the reallocation failed and `roster` is still valid. Assigning the `realloc` return directly to `roster` would lose the original pointer on failure.
+`malloc` requires a C runtime heap — a region of RAM configured by the linker script, a free-list implementation, and a `_sbrk` (or equivalent) call to expand the heap on request. On a bare-metal system with no operating system, none of this is provided automatically, and many embedded toolchains disable the heap entirely. Even where `malloc` is available, the risks are significant: allocation time is non-deterministic because the free-list search takes variable time depending on fragmentation, which can violate hard real-time timing constraints; and heap fragmentation in a long-running system can cause a later allocation to fail even when the total free bytes would be sufficient. The standard embedded practice is to size all buffers statically at startup — large enough for the worst-case scenario — and never call `malloc` after initialisation.
 
 ---
 
 ## 💡 Why we made this decision
 
-### A fixed array cannot grow
+### `volatile` — preventing the compiler from caching hardware register reads
 
-The Phase 12 roster is `static crew_member_t crew[MAX_CREW]` — six slots, always, determined at compile time. The array sits in the program's BSS segment; its size is baked into the binary. There is no mechanism to add a seventh slot at runtime short of recompiling. For a flight computer that may receive crew during a mid-mission docking, this is a hard operational limit.
+Without `volatile`, the compiler treats `ENGINE_CTRL` as an ordinary variable in RAM. In a tight loop that reads `*pENGINE_CTRL` multiple times without writing to it, the compiler is allowed to prove that nothing in the loop body modifies `ENGINE_CTRL`, load the value once into a CPU register, and use that register for all subsequent tests. On a desktop simulation where only this program writes the variable, that optimisation is always correct. On real hardware, the engine peripheral controller writes to the physical register independently — the CPU's perspective is that nothing in the C program writes it, so the compiler's optimisation is technically legal. The cached register holds a stale value; peripheral updates are silently missed.
 
-`malloc` lifts that limit by allocating from the heap at runtime. The heap is a pool of memory managed by the C runtime; it grows as the program requests blocks and shrinks as blocks are freed. Calypso can start with a roster sized for the pre-launch crew and grow it — without a recompile — when a docking transfer adds members.
+Adding `volatile` breaks that optimisation by contract: the compiler must emit a memory load instruction for every read of a `volatile`-qualified variable, regardless of what the surrounding code does.
 
 ```mermaid
-flowchart TD
-    A["Phase 12: crew[MAX_CREW] — BSS segment\nsize fixed at compile time"] -->|"crew transfer exceeds MAX_CREW"| B["no room — transfer rejected or undefined"]
-    C["Phase 13: crew_member_t *roster — heap pointer\nsize decided at runtime"] -->|"capacity exceeded"| D["realloc: block grows or moves\nroster updated to new address"]
+flowchart LR
+    HW["Hardware peripheral\nwrites register"] --> PHYS["Physical memory\n0x40020000"]
+    PHYS -->|"volatile: forced reload\non every access"| FRESH["CPU sees\ncurrent value ✓"]
+    PHYS -.->|"without volatile:\ncompiler may cache"| STALE["CPU sees\nstale register copy ✗"]
 ```
 
-### The cost: you own every byte
+### Memory-mapped I/O — a pointer that is a hardware address
 
-The heap is not managed for you. Every `malloc` must be paired with exactly one `free`. A `malloc` with no `free` is a memory leak — the block is never returned to the pool. On a desktop program that exits quickly this is often harmless; on a flight computer running for days or months, small leaks compound into exhaustion. On a bare-metal embedded system with no OS-level memory reclamation, a leak is permanent.
+On a real microcontroller, `ENGINE_CTRL` is not a variable in RAM. It is a specific physical memory address the processor maps to the engine peripheral's control register — `0x40020000` in the Calypso hardware spec. The peripheral controller writes to that address; the CPU reads from it. There is no C variable to take the address of. To give C code access to it, you cast the known integer address to a pointer:
 
-`realloc` introduces an additional hazard: if the block moves, the old pointer becomes a dangling pointer — a pointer to memory that has been freed and potentially reallocated for something else. Any access through the old pointer after `realloc` returns a new address is undefined behaviour.
+```c
+volatile uint32_t * const pMMIO_ENGINE_CTRL = (volatile uint32_t *)0x40020000UL;
+```
 
-Neither of these is enforced by the compiler. You will not get a warning. You will not get an error. The discipline is entirely yours.
+`*pMMIO_ENGINE_CTRL` now reads from address `0x40020000`. Every read is forced to go to physical memory — not a CPU register — because the pointer type is `volatile uint32_t *`. The `const` on the pointer means it can never be reseated; what it points at can change (that is the peripheral register), but the pointer always refers to the same address.
+
+In the simulation, `pENGINE_CTRL` still points to `&ENGINE_CTRL` — a real variable in RAM, not a hardware address. The MMIO pointer is shown as a commented declaration in `engine.c` to demonstrate the pattern without crashing the program (dereferencing `0x40020000` on a desktop causes a segfault because no memory is mapped there).
+
+### Struct bitfields — naming bits instead of shifting them
+
+Phase 6 introduced shift-and-mask expressions to read and write fields within `ENGINE_CTRL`. The throttle field occupies bits 4–7:
+
+```c
+/* read the throttle field */
+uint8_t throttle = (uint8_t)((*pENGINE_CTRL >> 4) & 0xF);
+
+/* write the throttle field */
+*pENGINE_CTRL &= ~((uint32_t)0xF << 4);
+*pENGINE_CTRL |=  ((uint32_t)level << 4);
+```
+
+The arithmetic is correct, but the intent — read or write the throttle field — is buried in numbers. A struct bitfield names each field and declares its width in bits:
+
+```c
+typedef struct {
+    uint32_t thrusters : 4;  /* bits 0-3: one enable bit per thruster pair */
+    uint32_t throttle  : 4;  /* bits 4-7: throttle level 0-15 */
+    uint32_t reserved  : 24; /* bits 8-31: reserved */
+} engine_ctrl_reg_t;
+```
+
+`bits.throttle` reads the throttle field directly. The register layout is visible in the struct definition; the field name is self-documenting; and if the throttle field moved to different bits in a new hardware revision, you update the struct in one place rather than hunting through arithmetic.
+
+One important caveat: bitfield layout within a storage unit is **implementation-defined**. The C standard does not guarantee that `thrusters` occupies the lowest bits, or that fields are packed without gaps, or which end of the integer the first field starts from. The mapping above is correct on little-endian targets with GCC and Clang — which covers every platform Calypso targets — but it is not portable across architectures or guaranteed to match the register layout on a different MCU without careful verification.
 
 ---
 
 ## ⏮️ What we built in the previous branch
 
-Phase 12 replaced the three parallel arrays from Phase 11 with a single `crew_member_t crew[MAX_CREW]` struct array. `crew_member_t` bundles name, rank, ID, and assignment into one type, eliminating the index-drift risk that was invisible in the parallel-array design. The SOLUTION commit at the start of this branch adds `crew_find_by_id()` (Challenge 4), which walks the roster comparing `crew[i].id` with the target, and `crew_update_rank()` (Challenge 5), which updates the rank field in place through a pointer using arrow notation.
+Phase 13 replaced the fixed `crew_member_t crew[MAX_CREW]` array with a heap-allocated roster using `calloc`/`realloc`/`free`. A dynamic mission log buffer in `main.c` grew with `realloc` as entries accumulated, using the safe temporary-pointer pattern throughout. Every allocation path included a `NULL` check; every exit path freed the allocations before returning. The SOLUTION commit at the start of this branch adds `crew_shrink()` (Challenge 4) — which reallocates the roster down to exactly `loaded` slots using the same safe-temporary pattern — and marks `log_append()` (Challenge 5 stretch), which was already present in Phase 13's code as the mission log buffer's append function.
 
 ---
 
 ## 🎯 What we're doing in this branch
 
-- Replace `static crew_member_t crew[MAX_CREW]` in `crew.c` with a heap-allocated `crew_member_t *roster` initialised by `calloc(INITIAL_CAP, sizeof(crew_member_t))`
-- Add `realloc` growth logic: when `loaded == capacity`, double the capacity; assign to a temporary pointer, `NULL`-check, then update `roster`
-- Add `NULL` checks on every `malloc` and `realloc` return value; print an error and exit if allocation fails
-- Free the roster with `free(roster)` at mission end — every allocation has exactly one matching free
-- Add a dynamic mission log buffer `char *log_buf` in `main.c`, grown with `realloc` as log entries accumulate, freed before exit
-- Demonstrate `calloc` for zero-initialised allocation alongside `malloc` and explain the difference
+- Qualify `ENGINE_CTRL` and `ENGINE_STATUS` as `static volatile uint32_t` in `engine.c` — every access forces a memory read rather than reusing a cached CPU register value
+- Update `pENGINE_CTRL` from `uint32_t * const` to `volatile uint32_t * const` — the pointer type must match the volatile-qualified object it points to
+- Add a commented `pMMIO_ENGINE_CTRL` declaration in `engine.c` showing the cast from a fixed integer address to a `volatile uint32_t *` — the form used on real hardware with memory-mapped peripherals
+- Declare `engine_ctrl_reg_t` in `engine.h` — a struct with three bitfields (`thrusters : 4`, `throttle : 4`, `reserved : 24`) that map the `ENGINE_CTRL` layout into named fields
+- Add `engine_read_ctrl_bits()` to `engine.c` — copies the current `ENGINE_CTRL` value into an `engine_ctrl_reg_t` and returns it, so `bits.throttle` can be compared against the manual `(reg >> 4) & 0xF` extraction from Phase 6
+- Add `const uint8_t BOOT_CONFIG[]` in `main.c` — a read-only boot data array annotated for ROM/flash placement, demonstrating how `const` signals the linker to keep the data in non-volatile memory on embedded targets
+
+---
+
+## 🏆 The abstraction we earned
+
+> Before this phase, reading the throttle field from `ENGINE_CTRL` required knowing that it occupies bits 4–7 and writing `(uint8_t)((*pENGINE_CTRL >> 4) & 0xF)` — arithmetic that carries no indication of what field it computes. With `engine_ctrl_reg_t`, the register layout is documented once in the struct definition: `throttle : 4` at offset 4. Reading the throttle is now `bits.throttle`. The struct is the hardware register layout written in C; the field name is self-documenting; and if the hardware team moves the throttle field in a board revision, you update the struct definition rather than auditing every shift-and-mask expression in the codebase.
 
 ---
 
 ## 🧑🏻‍🏫 Learning goals
 
 ### Understand
-- **Explain** the difference between stack and heap allocation — lifetime, ownership, and when each is appropriate
-- **Identify** memory leaks and their consequences in long-running programs and on embedded systems where no OS reclaims memory on exit
-- **Identify** dangling pointers and the undefined behaviour they produce — both from failing to null a pointer after `free` and from a stale pointer after `realloc` moves a block
+- **Explain** `volatile` — why the compiler must reload a variable from memory on every access, and what silent bugs occur without it in code that reads hardware control and status registers
+- **Explain** why heap allocation (`malloc`/`realloc`) is typically avoided in bare-metal embedded systems where timing must be deterministic and no OS reclaims memory on exit
+- **Explain** ISR constraints — why an interrupt service routine must return quickly, must not block, must not call `malloc`, and why any variable it shares with the main loop must be `volatile`
 
 ### Apply
-- **Allocate** memory using `malloc()`, `calloc()`, and `realloc()` and explain what each initialises
-- **Free** allocated memory with `free()` — every allocation has exactly one matching free
-- **Use** dynamic allocation to create the crew roster and log buffer at runtime
-- **Write** `NULL` checks on every `malloc`/`realloc` return value and handle the failure path explicitly
+- **Declare** `volatile`-qualified register variables in `engine.c` and a memory-mapped I/O pointer cast from a fixed integer address — the correct form for accessing hardware peripherals in C
+- **Apply** bitmask set, clear, test, and read operations to `volatile uint32_t` hardware control and status registers — the same Phase 6 operations, now on correctly-qualified variables
+- **Use** fixed-width integer types (`uint8_t`, `uint16_t`, `uint32_t`) exclusively in all engine register code, making the size and range of every register value explicit
+- **Declare** `engine_ctrl_reg_t` as a struct with named bitfields that match the `ENGINE_CTRL` register layout, and use `engine_read_ctrl_bits()` to populate it
+- **Apply** `const` to `BOOT_CONFIG[]` to signal read-only ROM/flash placement to both the compiler (reject writes) and the linker (place in flash)
+
+### Analyze
+- **Examine** the difference between `uint32_t * const` (a const pointer to non-volatile data) and `volatile uint32_t * const` (a const pointer to volatile data) — what each qualifier prevents and why both are needed for a fixed hardware register pointer
+- **Compare** bitfield struct access (`bits.throttle`) with manual shift-and-mask (`(reg >> 4) & 0xF`) — what the abstraction buys in readability, and where its portability limits apply
 
 ---
 
@@ -151,147 +199,59 @@ Phase 12 replaced the three parallel arrays from Phase 11 with a single `crew_me
 
 | Concept | Plain English |
 |---|---|
-| **Heap** | A pool of memory the program can request at runtime — larger and longer-lived than the stack, but manually managed with no automatic cleanup. |
-| **`malloc(n)`** | Allocates `n` bytes on the heap. Returns a pointer to the block, or `NULL` on failure. The memory is uninitialised — contains whatever was there before. |
-| **`calloc(count, size)`** | Allocates `count * size` bytes and zeroes every byte before returning. Slower than `malloc` but safe when you need a clean starting state. |
-| **`realloc(ptr, new_size)`** | Resizes a block. May extend in place or allocate a new block, copy the old contents, and free the original. Returns the new address, which may differ from `ptr`. |
-| **`free(ptr)`** | Returns the block to the heap. The pointer variable still holds the old address — set it to `NULL` immediately after to prevent accidental reuse. |
-| **`NULL` check** | Every `malloc`/`realloc` can fail and return `NULL`. Dereferencing a `NULL` pointer is undefined behaviour — always check before using the returned pointer. |
-| **Memory leak** | An allocation with no matching `free`. The block is never returned to the heap; available memory shrinks until the program exhausts it or exits. |
-| **Dangling pointer** | A pointer that still holds an address after the memory at that address has been freed. Reading or writing through it is undefined behaviour. |
-| **Stale pointer after `realloc`** | If `realloc` moves the block, the old pointer is now a dangling pointer. Always use `realloc`'s return value, not the original pointer, after the call. |
-
-```mermaid
-flowchart LR
-    M["malloc / calloc\nreturns pointer or NULL"] --> NC1["NULL check"]
-    NC1 -->|"NULL"| E1["print error, exit"]
-    NC1 -->|"valid"| U["use pointer"]
-    U --> R["realloc when full\ntmp = realloc(ptr, new_size)"]
-    R --> NC2["NULL check tmp"]
-    NC2 -->|"NULL"| E2["original ptr still valid\nhandle error"]
-    NC2 -->|"valid"| U2["ptr = tmp; continue"]
-    U2 --> F["free(ptr) when done\nptr = NULL"]
-```
+| **`volatile`** | A type qualifier that tells the compiler "this variable can change at any time from outside the program — read it from memory on every access, do not cache it in a CPU register." |
+| **Compiler register caching** | An optimisation where the compiler holds a variable's value in a CPU register rather than re-reading memory on each access. Safe for ordinary variables; silently wrong for hardware registers updated by the peripheral independently. |
+| **Memory-mapped I/O (MMIO)** | Hardware peripherals controlled by reading and writing specific physical memory addresses. The CPU accesses them like ordinary RAM, but the underlying device responds to every read and write. |
+| **MMIO pointer** | A `volatile T * const` pointer initialised by casting a known integer address — `(volatile uint32_t *)0x40020000UL` — that gives C code direct access to a hardware peripheral register at a fixed physical location. |
+| **Struct bitfields** | Struct members declared with a bit-width — `uint32_t throttle : 4` — that the compiler packs into a specified number of bits. Used to overlay a hardware register and name its fields rather than computing them with shift-and-mask arithmetic. |
+| **Bitfield portability** | Bitfield layout within a storage unit is implementation-defined: field order, padding, and which bits a field occupies may vary across compilers and targets. Bitfields work reliably within one compiler/target pair but are not guaranteed to be portable across architectures. |
+| **ISR (Interrupt Service Routine)** | A function invoked automatically by the hardware when an interrupt fires. Must return quickly: no blocking calls, no `malloc`, no long computation. Variables shared between an ISR and the main loop must be `volatile` so both sides always see the live memory value. |
+| **`const` for ROM placement** | Declaring data `const` signals to the compiler (reject writes at compile time) and the linker (place the object in the read-only flash section). On embedded targets, `const` data lives in non-volatile flash rather than consuming RAM that is lost on power cycle. |
 
 ---
 
 ## 🔍 What to notice in the code
 
-**[`crew.c:14`](crew.c#L14)**
-`#define INITIAL_CAP 2` is deliberately small. Three members are loaded at startup, so adding the third triggers a realloc immediately — the growth becomes observable in the output without needing a separate demo. A production system would start larger; the small value here is purely pedagogical.
-
-**[`crew.c:21–23`](crew.c#L21)**
-The three static variables that replaced `static crew_member_t crew[MAX_CREW]`. `roster` is a pointer — it holds the heap address rather than the storage itself. `capacity` and `loaded` are tracked separately because they can diverge: `capacity` is what `malloc`/`realloc` gave us; `loaded` is how many slots we have actually written. The difference is unused-but-allocated capacity.
-
-**[`crew.c:46–59`](crew.c#L46)**
-`crew_init` uses `calloc` instead of `malloc`. Both allocate from the heap; `calloc` also zeroes every byte. Every `roster[i].name[0]` starts as `'\0'`, so the slot is a valid empty C string without any explicit initialisation loop. The `NULL` check on line 53 is mandatory — `calloc` can fail and return `NULL` on any system where memory is exhausted.
-
-**[`crew.c:61–66`](crew.c#L61)**
-`crew_free` in four lines. `free(roster)` returns the block to the heap. Setting `roster = NULL` immediately after prevents dangling pointer use through direct access — any code that reads `roster[i]` after the free would be dereferencing freed memory; the `NULL` assignment makes that crash visibly rather than silently corrupt. Note that `crew_add` has no explicit `NULL` check on `roster` — the correct call order is `crew_init` before any `crew_add`, and `crew_free` only at the end. `crew_free` sets `roster = NULL` as a safety net against accidental direct access, not as a guard on `crew_add`.
-
-**[`crew.c:68–93`](crew.c#L68)**
-`crew_add` is where the `realloc` pattern lives. Read the block comment on lines 70–77 before anything else: it explains why the return value goes to `tmp` rather than directly back to `roster`. If `realloc` returns `NULL`, `roster` still holds the old valid address — the data is safe and the function can return `-1`. Assigning `roster = realloc(roster, ...)` would lose the only pointer to the old block if `realloc` fails, leaking every byte of it.
-
-**[`main.c:65–79`](main.c#L65)**
-`log_append` — the second `realloc` site in this phase. It doubles the log buffer whenever the next entry would not fit, using the same safe-temporary pattern as `crew_add`. The `while` loop (rather than `if`) handles the edge case where a single entry is larger than the current capacity — it keeps doubling until the entry fits. If you're working on Challenge 5 (stretch), this is the function you're implementing a version of.
-
-**[`main.c:234–265`](main.c#L234)**
-The crew and log initialisation block. Read `crew_init()` first (calloc), then `malloc(log_cap)` with the explicit `log_buf[0] = '\0'` — these two lines side-by-side illustrate why calloc is convenient for structs but malloc requires a manual starting state for strings. The comment on line 261 names exactly when the first roster realloc fires.
-
-**[`main.c:319–340`](main.c#L319)**
-The docking transfer block. Before adding OKAFOR: 3 loaded / 4 capacity. Adding PETROV hits the second `loaded == capacity` check and triggers the roster's second realloc (4→8). The log entries for both crew members are appended immediately after each `crew_add`, keeping the log consistent with the actual roster state.
-
-**[`main.c:532–533`](main.c#L532)** *(normal exit)* and **[`main.c:542–543`](main.c#L542)** *(emergency shutdown)*
-Every allocation has exactly one matching free. Both exit paths call `free(log_buf); log_buf = NULL; crew_free()` in that order. The `NULL` assignment is the guard: if the same path were ever reached twice, the second `free(NULL)` is a no-op rather than undefined behaviour.
+_Code references will be added after the feature code is written._
 
 ---
 
 ## ▶️ Running this branch
 
-**Prerequisites:** GCC or Clang (C99+) and CMake 3.10+, or just GCC/Clang directly.
-
-**With CMake (recommended):**
-```bash
-cmake -B build
-cmake --build build
-.\build\Debug\calypso.exe   # Windows (MSVC)
-.\build\calypso.exe         # Windows (MinGW)
-./build/calypso             # Linux / macOS
-```
-
-**Direct compilation (no CMake):**
-```bash
-gcc -std=c99 main.c sensors.c engine.c navigation.c crew.c -o calypso
-./calypso
-```
-
-The startup section now prints the two dynamic allocation events:
-```
-  [roster init]  capacity=2 (calloc)
-  [after 3 crew] capacity=4 (realloc: 2 -> 4)
-```
-
-The docking transfer section prints both realloc transitions:
-```
---- Docking Transfer ---
-  Before: 3 loaded / 4 capacity
-  After:  5 loaded / 8 capacity (realloc: 4 -> 8)
-```
-
-The mission log prints the buffer size and every appended entry:
-```
---- Mission Log ---
-  buffer: 256 bytes capacity | 142 bytes used
-BOOT: Calypso online
-CREW: CHEN loaded
-CREW: VASQUEZ loaded
-CREW: PARK loaded
-DOCK: OKAFOR transferred aboard
-DOCK: PETROV transferred aboard
-```
-
-| Command | Action |
-|---|---|
-| `n` | Advance mission phase |
-| `s` | Sensor scan — history, averages, drift, channel reconfiguration |
-| `m` | Print crew manifest with loaded/capacity counts |
-| `e` | Emergency shutdown — frees all allocations before exit |
-| `q` | Normal quit — frees all allocations before exit |
+_Run instructions will be added after the feature code is written._
 
 ---
 
 ## ✏️ Challenges for students
 
 **Challenge 1 — Analytical**
-`malloc` returns uninitialised memory — the bytes contain whatever was previously at that address. `calloc` zeroes the block before returning. For the crew roster, does it matter which one you use? What would happen if you read `roster[0].name` immediately after a `malloc` call without calling `crew_init` first? Would `calloc` prevent that problem, and if so, how?
+In `engine.c`, `ENGINE_CTRL` is now `static volatile uint32_t`. Without the `volatile` qualifier, a compiler optimising the `while (1)` command loop might load `*pENGINE_CTRL` into a CPU register once and reuse that register on every call to `engine_fault_critical()` — never re-reading memory. In the simulation, this would not actually matter because no hardware updates `ENGINE_CTRL` independently. On real hardware, where the engine peripheral controller writes to the register between loop iterations, it would matter critically. Explain in your own words: what would the program see without `volatile`? What does `volatile` change about the generated code? Why does the desktop simulation not let you observe this behaviour directly?
 
 **Challenge 2 — Analytical**
-The safe `realloc` pattern uses a temporary pointer:
-```c
-crew_member_t *tmp = realloc(roster, new_size);
-if (tmp == NULL) { /* handle failure — roster still valid */ }
-else { roster = tmp; }
-```
-What goes wrong if you write `roster = realloc(roster, new_size)` instead? Trace what happens to the original block if `realloc` returns `NULL` in that version.
+The C standard says bitfield layout within a storage unit is implementation-defined. For `engine_ctrl_reg_t`, the mapping of `thrusters` to bits 0–3 and `throttle` to bits 4–7 is a guarantee provided by GCC and Clang on little-endian targets — not by the C standard itself. What would break if `engine_ctrl_reg_t` were compiled on a big-endian MCU where bitfields are packed from the most-significant bit? Would `bits.throttle` still match `engine_read_throttle()`? How do embedded C projects that need bitfield structs to work correctly across architectures typically handle this?
 
-**Challenge 3 — Analytical**
-After `free(roster)`, the code sets `roster = NULL`. Why? What happens if it does not, and a function later calls `crew_add()` — which checks `if (loaded == capacity)` before trying to `realloc` — without `roster` being reassigned first?
+**Challenge 3 — Additive**
+Add `static volatile bool engine_halted = false;` at file scope in `engine.c`. Add two functions: `void engine_halt(void)` sets it to `true`; `bool engine_is_halted(void)` returns it. Declare both in `engine.h`. In the DOCKED case of the mission phase `switch` in `main.c`, call `engine_halt()`. At the top of the `while (1)` command loop, check `engine_is_halted()` and `break` if it returns `true` — the loop exits automatically when the mission completes, without waiting for a `q` command. The `volatile` qualifier matters here: without it, the compiler could legally check `engine_halted` once before the loop begins and never re-read the variable inside the loop.
 
-**Challenge 4 — Additive**
-Add `void crew_shrink(void)` to `crew.c` and `crew.h`. When called, it should `realloc` the roster down to exactly `loaded` slots — releasing any unused capacity. Use the safe temporary-pointer pattern and a `NULL` check. Call it from `main.c` after a crew member is added, then print `capacity` before and after to confirm the shrink.
+**Challenge 4 — Analytical**
+Phase 13 used `malloc` and `realloc` freely for the dynamic crew roster and mission log buffer. On a bare-metal embedded system with no OS, `malloc` may not be available — and many embedded projects forbid its use entirely, even where a C runtime provides it. Name two specific technical reasons why `malloc` is problematic in a hard real-time embedded context. "There is no OS" does not count as a reason — focus on properties of `malloc` itself that conflict with embedded system requirements.
 
 **Challenge 5 — Additive (stretch)**
-The mission log buffer is grown with `realloc` each time a new entry is appended. Write a `log_append(char **log_buf, size_t *log_cap, size_t *log_len, const char *entry)` function that checks whether the next entry fits in the current capacity, doubles the buffer with `realloc` if not, and appends the entry with `strncat`. Free the buffer before `return 0` in `main.c`. This combines dynamic allocation, string handling, and the safe `realloc` pattern in one exercise.
+In the engine control section of `main.c`, after `engine_set_throttle(7)`, call `engine_read_ctrl_bits()` and print both the raw hex value from `engine_get_ctrl()` and the individual bitfields — `bits.thrusters` and `bits.throttle` — side by side:
+```
+ENGINE_CTRL bits: raw=0x00000074  thrusters=4  throttle=7
+```
+Verify that `bits.throttle` matches `engine_read_throttle()` and that the raw hex value is consistent with the bitmask calculations from Phase 6. What should `bits.thrusters` show after `engine_enable_thruster(0)` and `engine_enable_thruster(2)` have been called — and does it match the raw register?
 
 ---
 
 ## 💭 Thought pieces for the next branch
 
-1. `ENGINE_CTRL` is a plain `uint32_t`. The compiler may legally cache it in a CPU register between reads — on real hardware that means we would silently miss updates from the peripheral. How do we prevent the compiler from doing that?
-2. On a real MCU, hardware peripherals live at fixed memory addresses — say `0x40020000`. How does C give us access to the value at an arbitrary address?
-3. We have been using `malloc` freely. On a bare-metal embedded system with no OS, is `malloc` available? Even if it is, what are the risks of using it there?
+1. The base address `0x40020000UL` for the engine peripheral lives in `engine.c`. If the hardware team remaps it in a new board revision, we update one place — but imagine it appeared in three source files. What does C give us to define a value once and use it everywhere without going through a function call or a variable?
+2. Debug telemetry is mixed into the core sensor reads and engine control output. On a production firmware build, we do not want that output at all. How could we include or exclude it based on a compile-time flag — without deleting and re-adding lines every time we switch between debug and production builds?
+3. Headers currently have no multiple-inclusion protection. If `main.c` includes `sensors.h` directly, and also includes `navigation.h` which itself includes `sensors.h` again, the preprocessor expands both `#include` directives in full. What does the compiler then see, and what happens when it encounters the same `typedef` or `enum` declaration a second time in the same translation unit?
 
 ---
 
-*Previous branch: [`phase-12_structs`]*
-*Next branch: [`phase-14_embedded-patterns`]*
+*Previous branch: [`phase-13_dynamic-memory`]*
+*Next branch: [`phase-15_preprocessor`]*
