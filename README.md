@@ -140,7 +140,7 @@ Phase 11 added a crew management module using three parallel arrays: `char names
 - Replace the three parallel arrays in `crew.c` with `static crew_member_t crew[MAX_CREW]` and update all functions to use dot notation (`crew[i].name`, `crew[i].rank`, etc.)
 - Add `crew_print_member(crew_member_t m)` to demonstrate pass-by-value: the function prints one crew member's fields from a copy — changes inside cannot affect the caller's record
 - Add `crew_reassign(crew_member_t *m, CrewAssignment new_assignment)` to demonstrate pass-by-pointer: arrow notation writes back through the address, modifying the caller's struct directly
-- Define `typedef struct` for `position_t` (`float x_au`, `float y_au`) and `spacecraft_t` (`char shuttle_id[16]`, `enum MissionPhase phase`, `sensor_float_t velocity`, `uint16_t fuel`, `position_t position`) in `main.c`; pass `spacecraft_t` by pointer into `spacecraft_status()` and access fields with arrow notation
+- Define `typedef struct` for `position_t` (`float x_au`, `float y_au`) and `spacecraft_t` (`char shuttle_id[16]`, `enum MissionPhase phase`, `sensor_float_t velocity`, `uint16_t fuel`, `position_t position`) in `main.c`; pass `spacecraft_t` by pointer into `spacecraft_print_status()` and access fields with arrow notation
 - Use `sc.position.x_au` to demonstrate nested struct field access
 
 ---
@@ -277,16 +277,16 @@ Comms line              : TX[CHEN]  (len=8)
 `sizeof(crew_member_t)` may not equal `MAX_NAME_LEN + sizeof(CrewRank) + sizeof(uint8_t) + sizeof(CrewAssignment)`. What causes the discrepancy? On which field boundary is padding most likely to be inserted, and why? How could you check whether padding is present without reading compiler documentation?
 
 **Challenge 2 — Analytical**
-`spacecraft_status(spacecraft_t sc)` receives the struct by value. `spacecraft_update_fuel(spacecraft_t *sc, uint16_t new_fuel)` receives a pointer. After each function modifies the fuel field and returns, what does the caller's `sc.fuel` contain — and why? Trace both cases step by step.
+Look at `crew_print_member` ([`crew.c:122`](crew.c#L122)) and `crew_reassign` ([`crew.c:144`](crew.c#L144)). Both operate on a `crew_member_t`, but one receives it by value and the other by pointer. Trace what happens to the caller's struct in `main.c` after each returns. Then predict: if `spacecraft_print_status` were changed to set `sc->fuel = 0` before printing, what would `sc.fuel` be in `main.c` after the call — and why?
 
 **Challenge 3 — Analytical**
 The `crew_find_by_name()` function now calls `strcmp(crew[i].name, name)` instead of `strcmp(names[i], name)`. The string comparison logic is identical. What did the refactor change structurally — and what does the new form make impossible that the parallel-array form allowed?
 
 **Challenge 4 — Additive**
-Add `void crew_print_member(crew_member_t m)` to `crew.c` and `crew.h`. It should print all four fields on one line. Call it from `main.c` using `crew_get_member(0)` — the accessor returns a copy by value, which is passed directly into `crew_print_member`. Add a comment confirming that the roster slot is unmodified after the call.
+Add `int crew_find_by_id(uint8_t id)` to `crew.c` and `crew.h`. It should walk the roster using `crew[i].id == id` and return the slot index, or -1 if not found. Call it from `main.c` to look up crew member 102 and print the result. This follows the same pattern as `crew_find_by_name` but accesses a different field with dot notation.
 
 **Challenge 5 — Additive (stretch)**
-Add `void crew_reassign(crew_member_t *m, CrewAssignment new_assignment)` that updates the assignment field through the pointer using arrow notation. Call it from `main.c` using `crew_get_member_ptr(0)` to move the first crew member to `ASSIGN_SCIENCE`, then call `crew_print_member(crew_get_member(0))` to confirm the change is reflected in the live roster. Add a comment explaining why a pointer parameter was required here instead of pass-by-value.
+Add `void crew_update_rank(crew_member_t *m, CrewRank new_rank)` to `crew.c` and `crew.h`. It should update the rank field through the pointer using arrow notation (`m->rank = new_rank`). Call it from `main.c` using `crew_get_member_ptr(2)` to promote PARK from `RANK_ENGINEER` to `RANK_PILOT`, then call `crew_print_member(crew_get_member(2))` to confirm the change is reflected in the live roster. Add a comment explaining why the pointer parameter is required here.
 
 ---
 
