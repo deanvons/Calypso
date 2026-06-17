@@ -123,7 +123,7 @@ Phase 12 replaced the three parallel arrays from Phase 11 with a single `crew_me
 
 ## 🎯 What we're doing in this branch
 
-- Replace `static crew_member_t crew[MAX_CREW]` in `crew.c` with a heap-allocated `crew_member_t *roster` initialised by `malloc(initial_cap * sizeof(crew_member_t))`
+- Replace `static crew_member_t crew[MAX_CREW]` in `crew.c` with a heap-allocated `crew_member_t *roster` initialised by `calloc(INITIAL_CAP, sizeof(crew_member_t))`
 - Add `realloc` growth logic: when `loaded == capacity`, double the capacity; assign to a temporary pointer, `NULL`-check, then update `roster`
 - Add `NULL` checks on every `malloc` and `realloc` return value; print an error and exit if allocation fails
 - Free the roster with `free(roster)` at mission end — every allocation has exactly one matching free
@@ -193,7 +193,7 @@ The three static variables that replaced `static crew_member_t crew[MAX_CREW]`. 
 `crew_add` is where the `realloc` pattern lives. Read the block comment on lines 70–77 before anything else: it explains why the return value goes to `tmp` rather than directly back to `roster`. If `realloc` returns `NULL`, `roster` still holds the old valid address — the data is safe and the function can return `-1`. Assigning `roster = realloc(roster, ...)` would lose the only pointer to the old block if `realloc` fails, leaking every byte of it.
 
 **[`main.c:65–79`](main.c#L65)**
-`log_append` — the second `realloc` site in this phase. It doubles the log buffer whenever the next entry would not fit, using the same safe-temporary pattern as `crew_add`. The `while` loop (rather than `if`) handles the edge case where a single entry is larger than the current capacity — it keeps doubling until the entry fits. Students implementing Challenge 5 (stretch) are writing a version of this function.
+`log_append` — the second `realloc` site in this phase. It doubles the log buffer whenever the next entry would not fit, using the same safe-temporary pattern as `crew_add`. The `while` loop (rather than `if`) handles the edge case where a single entry is larger than the current capacity — it keeps doubling until the entry fits. If you're working on Challenge 5 (stretch), this is the function you're implementing a version of.
 
 **[`main.c:234–265`](main.c#L234)**
 The crew and log initialisation block. Read `crew_init()` first (calloc), then `malloc(log_cap)` with the explicit `log_buf[0] = '\0'` — these two lines side-by-side illustrate why calloc is convenient for structs but malloc requires a manual starting state for strings. The comment on line 261 names exactly when the first roster realloc fires.
