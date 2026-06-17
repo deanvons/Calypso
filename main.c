@@ -249,6 +249,22 @@ int main(void) {
     crew_print_member(crew_get_member(0));
     printf("\n");
 
+    /* SOLUTION (Challenge 4): look up slot by numeric ID using dot notation */
+    int found_by_id = crew_find_by_id((uint8_t)102);
+    printf("Lookup by id 102        : slot %d\n", found_by_id);
+    found_by_id = crew_find_by_id((uint8_t)255); /* no crew has this id */
+    printf("Lookup by id 255        : slot %d (not found)\n\n", found_by_id);
+
+    /*
+     * SOLUTION (Challenge 5): crew_update_rank takes a pointer so arrow notation
+     * writes directly into the live roster slot. A by-value parameter would copy
+     * the struct and the rank change would be discarded on return.
+     */
+    crew_update_rank(crew_get_member_ptr(2), RANK_PILOT);
+    printf("After rank update (ptr) :\n");
+    crew_print_member(crew_get_member(2));
+    printf("\n");
+
     /* --- Spacecraft record ----------------------------------------------- */
     /*
      * Dot notation: sc.shuttle_id, sc.fuel access fields directly on the value.

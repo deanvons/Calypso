@@ -62,6 +62,10 @@ crew_member_t  crew_get_member(int idx);
 crew_member_t *crew_get_member_ptr(int idx);
 
 int            crew_find_by_name(const char *name);
+
+/* SOLUTION (Challenge 4): look up a crew member by numeric ID */
+int            crew_find_by_id(uint8_t id);
+
 int            crew_count(void);
 
 /* --- Output -------------------------------------------------------------- */
@@ -85,3 +89,10 @@ void           crew_transmit_names(void);
  * Passing by pointer is required because a by-value copy would discard the change.
  */
 void           crew_reassign(crew_member_t *m, CrewAssignment new_assignment);
+
+/*
+ * SOLUTION (Challenge 5): update the rank field through the pointer.
+ * Arrow notation writes directly into the caller's struct -- a by-value
+ * parameter would discard the change when the function returns.
+ */
+void           crew_update_rank(crew_member_t *m, CrewRank new_rank);

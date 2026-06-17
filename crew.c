@@ -102,6 +102,16 @@ int crew_find_by_name(const char *name) {
     return -1;
 }
 
+/* SOLUTION (Challenge 4): same walk as crew_find_by_name, different field */
+int crew_find_by_id(uint8_t id) {
+    for (int i = 0; i < loaded; i++) {
+        if (crew[i].id == id) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 int crew_count(void) {
     return loaded;
 }
@@ -150,4 +160,10 @@ void crew_reassign(crew_member_t *m, CrewAssignment new_assignment) {
      * after the function returns. A by-value parameter would discard it.
      */
     m->assignment = new_assignment;
+}
+
+/* SOLUTION (Challenge 5): arrow notation writes through the pointer */
+void crew_update_rank(crew_member_t *m, CrewRank new_rank) {
+    if (m == NULL) return;
+    m->rank = new_rank;
 }
