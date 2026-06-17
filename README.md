@@ -177,17 +177,86 @@ flowchart LR
 
 ## 🔍 What to notice in the code
 
-**[`crew.c`](crew.c)**
-_Placeholder — to be completed after code is written._
+**[`crew.c:14`](crew.c#L14)**
+`#define INITIAL_CAP 2` is deliberately small. Three members are loaded at startup, so adding the third triggers a realloc immediately — the growth becomes observable in the output without needing a separate demo. A production system would start larger; the small value here is purely pedagogical.
 
-**[`main.c`](main.c)**
-_Placeholder — to be completed after code is written._
+**[`crew.c:21–23`](crew.c#L21)**
+The three static variables that replaced `static crew_member_t crew[MAX_CREW]`. `roster` is a pointer — it holds the heap address rather than the storage itself. `capacity` and `loaded` are tracked separately because they can diverge: `capacity` is what `malloc`/`realloc` gave us; `loaded` is how many slots we have actually written. The difference is unused-but-allocated capacity.
+
+**[`crew.c:46–59`](crew.c#L46)**
+`crew_init` uses `calloc` instead of `malloc`. Both allocate from the heap; `calloc` also zeroes every byte. Every `roster[i].name[0]` starts as `'\0'`, so the slot is a valid empty C string without any explicit initialisation loop. The `NULL` check on line 53 is mandatory — `calloc` can fail and return `NULL` on any system where memory is exhausted.
+
+**[`crew.c:61–66`](crew.c#L61)**
+`crew_free` in four lines. `free(roster)` returns the block to the heap. Setting `roster = NULL` immediately after is the discipline that prevents dangling pointer use: if any code path accidentally calls `crew_add` after `crew_free`, the `NULL` check inside `crew_add` will surface cleanly rather than corrupting a freed block.
+
+**[`crew.c:68–93`](crew.c#L68)**
+`crew_add` is where the `realloc` pattern lives. Read the block comment on lines 70–77 before anything else: it explains why the return value goes to `tmp` rather than directly back to `roster`. If `realloc` returns `NULL`, `roster` still holds the old valid address — the data is safe and the function can return `-1`. Assigning `roster = realloc(roster, ...)` would lose the only pointer to the old block if `realloc` fails, leaking every byte of it.
+
+**[`main.c:65–79`](main.c#L65)**
+`log_append` — the second `realloc` site in this phase. It doubles the log buffer whenever the next entry would not fit, using the same safe-temporary pattern as `crew_add`. The `while` loop (rather than `if`) handles the edge case where a single entry is larger than the current capacity — it keeps doubling until the entry fits. Students implementing Challenge 5 (stretch) are writing a version of this function.
+
+**[`main.c:234–265`](main.c#L234)**
+The crew and log initialisation block. Read `crew_init()` first (calloc), then `malloc(log_cap)` with the explicit `log_buf[0] = '\0'` — these two lines side-by-side illustrate why calloc is convenient for structs but malloc requires a manual starting state for strings. The comment on line 261 names exactly when the first roster realloc fires.
+
+**[`main.c:319–340`](main.c#L319)**
+The docking transfer block. Before adding OKAFOR: 3 loaded / 4 capacity. Adding PETROV hits the second `loaded == capacity` check and triggers the roster's second realloc (4→8). The log entries for both crew members are appended immediately after each `crew_add`, keeping the log consistent with the actual roster state.
+
+**[`main.c:532–533`](main.c#L532)** *(normal exit)* and **[`main.c:542–543`](main.c#L542)** *(emergency shutdown)*
+Every allocation has exactly one matching free. Both exit paths call `free(log_buf); log_buf = NULL; crew_free()` in that order. The `NULL` assignment is the guard: if the same path were ever reached twice, the second `free(NULL)` is a no-op rather than undefined behaviour.
 
 ---
 
 ## ▶️ Running this branch
 
-_Placeholder — to be completed after code is written._
+**Prerequisites:** GCC or Clang (C99+) and CMake 3.10+, or just GCC/Clang directly.
+
+**With CMake (recommended):**
+```bash
+cmake -B build
+cmake --build build
+.\build\Debug\calypso.exe   # Windows (MSVC)
+.\build\calypso.exe         # Windows (MinGW)
+./build/calypso             # Linux / macOS
+```
+
+**Direct compilation (no CMake):**
+```bash
+gcc -std=c99 main.c sensors.c engine.c navigation.c crew.c -o calypso
+./calypso
+```
+
+The startup section now prints the two dynamic allocation events:
+```
+  [roster init]  capacity=2 (calloc)
+  [after 3 crew] capacity=4 (realloc: 2 -> 4)
+```
+
+The docking transfer section prints both realloc transitions:
+```
+--- Docking Transfer ---
+  Before: 3 loaded / 4 capacity
+  After:  5 loaded / 8 capacity (realloc: 4 -> 8)
+```
+
+The mission log prints the buffer size and every appended entry:
+```
+--- Mission Log ---
+  buffer: 256 bytes capacity | 142 bytes used
+BOOT: Calypso online
+CREW: CHEN loaded
+CREW: VASQUEZ loaded
+CREW: PARK loaded
+DOCK: OKAFOR transferred aboard
+DOCK: PETROV transferred aboard
+```
+
+| Command | Action |
+|---|---|
+| `n` | Advance mission phase |
+| `s` | Sensor scan — history, averages, drift, channel reconfiguration |
+| `m` | Print crew manifest with loaded/capacity counts |
+| `e` | Emergency shutdown — frees all allocations before exit |
+| `q` | Normal quit — frees all allocations before exit |
 
 ---
 
