@@ -230,7 +230,7 @@ The commented `pMMIO_ENGINE_CTRL` declaration shows the real-hardware form: a fi
 **[`main.c:81–93`](main.c#L81)**
 `BOOT_CONFIG` is declared `static const uint8_t[]` at file scope, outside `main()`. It is initialised once at compile time and never written afterward — exactly the property `const` enforces and the property that lets the linker place this data in a read-only segment (flash, on an embedded target) instead of RAM.
 
-**[`main.c:96–101`](main.c#L96)**
+**[`main.c:101–105`](main.c#L101)**
 The boot banner reads `BOOT_CONFIG` byte by byte and prints it as hex. This is the only place `BOOT_CONFIG` is read — it exists to demonstrate the declaration, not to drive any runtime logic in this phase.
 
 ---
@@ -292,11 +292,11 @@ Add `static volatile bool engine_halted = false;` at file scope in `engine.c`. A
 Phase 13 used `malloc` and `realloc` freely for the dynamic crew roster and mission log buffer. On a bare-metal embedded system with no OS, `malloc` may not be available — and many embedded projects forbid its use entirely, even where a C runtime provides it. Name two specific technical reasons why `malloc` is problematic in a hard real-time embedded context. "There is no OS" does not count as a reason — focus on properties of `malloc` itself that conflict with embedded system requirements.
 
 **Challenge 5 — Additive (stretch)**
-In the engine control section of `main.c`, after `engine_set_throttle(7)`, call `engine_read_ctrl_bits()` and print both the raw hex value from `engine_get_ctrl()` and the individual bitfields — `bits.thrusters` and `bits.throttle` — side by side:
+In the engine control section of `main.c`, after `engine_set_throttle(7)`, call `engine_read_ctrl_bits()` and print both the raw hex value from `engine_get_ctrl()` and the individual bitfields — `bits.thrusters` and `bits.throttle` — side by side. At that point in the code, thrusters 0 and 2 are both enabled and the throttle has just been set to 7:
 ```
-ENGINE_CTRL bits: raw=0x00000074  thrusters=4  throttle=7
+ENGINE_CTRL bits: raw=0x00000075  thrusters=5  throttle=7
 ```
-Verify that `bits.throttle` matches `engine_read_throttle()` and that the raw hex value is consistent with the bitmask calculations from Phase 6. What should `bits.thrusters` show after `engine_enable_thruster(0)` and `engine_enable_thruster(2)` have been called — and does it match the raw register?
+Verify that `bits.throttle` matches `engine_read_throttle()` and that the raw hex value is consistent with the bitmask calculations from Phase 6. What should `bits.thrusters` show *after* the following `engine_disable_thruster(0)` call runs — and does it match the raw register at that point?
 
 ---
 
