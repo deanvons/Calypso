@@ -227,6 +227,15 @@ int main(void) {
     engine_set_throttle(7);
     printf("Set throttle = 7       : 0x%08" PRIX32 "\n", engine_get_ctrl());
 
+    /*
+     * SOLUTION (Challenge 5, stretch): read the same register through the
+     * bitfield struct and print thrusters/throttle alongside the raw hex --
+     * bits.throttle should match engine_read_throttle() exactly.
+     */
+    engine_ctrl_reg_t bits = engine_read_ctrl_bits();
+    printf("ENGINE_CTRL bits: raw=0x%08" PRIX32 "  thrusters=%u  throttle=%u\n",
+           engine_get_ctrl(), bits.thrusters, bits.throttle);
+
     engine_disable_thruster(0);
     printf("Disable thruster 0     : 0x%08" PRIX32 "\n", engine_get_ctrl());
 
@@ -393,6 +402,17 @@ int main(void) {
     printf("=========================================\n\n");
 
     while (1) {
+        /*
+         * SOLUTION (Challenge 3): exit automatically once the mission has
+         * docked, without waiting for a 'q' command. engine_is_halted()
+         * must re-read engine_halted from memory on every iteration -- the
+         * volatile qualifier on the underlying variable is what guarantees that.
+         */
+        if (engine_is_halted()) {
+            printf("Mission complete -- engine halted, shutting down.\n");
+            break;
+        }
+
         /* Ternary chain: produce the phase name without an if block */
         const char *phase_name =
             (current_phase == PREFLIGHT) ? "PREFLIGHT" :
@@ -450,6 +470,8 @@ int main(void) {
 
                 case DOCKED:
                     printf("  Docked: mission complete -- no further advance\n");
+                    /* SOLUTION (Challenge 3): mission complete -- halt the command loop */
+                    engine_halt();
                     break;
 
                 default:

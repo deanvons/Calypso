@@ -40,3 +40,7 @@ void     engine_set_critical_fault(void);
 bool     engine_fault_critical(void);
 void     engine_clear_status(void);
 void     engine_reset(void);
+
+/* SOLUTION (Challenge 3): mission-complete halt flag, set by main.c on DOCKED */
+void     engine_halt(void);
+bool     engine_is_halted(void);

@@ -120,3 +120,19 @@ void engine_clear_status(void) {
 void engine_reset(void) {
     *pENGINE_CTRL = 0u;
 }
+
+/*
+ * SOLUTION (Challenge 3): engine_halted is volatile for the same reason
+ * ENGINE_CTRL is -- main.c's while(1) loop reads it on every iteration, and
+ * without volatile the compiler could legally check it once before the loop
+ * begins and never re-read it from memory inside the loop body.
+ */
+static volatile bool engine_halted = false;
+
+void engine_halt(void) {
+    engine_halted = true;
+}
+
+bool engine_is_halted(void) {
+    return engine_halted;
+}
