@@ -212,13 +212,68 @@ Phase 13 replaced the fixed `crew_member_t crew[MAX_CREW]` array with a heap-all
 
 ## 🔍 What to notice in the code
 
-_Code references will be added after the feature code is written._
+**[`engine.c:27–28`](engine.c#L27)**
+`ENGINE_CTRL` and `ENGINE_STATUS` are now `static volatile uint32_t`. The comment immediately above explains why: on real hardware the peripheral controller writes these registers independently of this program, so the compiler cannot be allowed to cache a stale value in a CPU register.
+
+**[`engine.c:35`](engine.c#L35)**
+`pENGINE_CTRL` changed from `uint32_t * const` to `volatile uint32_t * const`. The pointer's target type must match the volatile-qualified variable it addresses — a plain `uint32_t *` pointed at a `volatile uint32_t` would be a type mismatch the compiler should warn about.
+
+**[`engine.c:37–48`](engine.c#L37)**
+The commented `pMMIO_ENGINE_CTRL` declaration shows the real-hardware form: a fixed integer address cast directly to a `volatile uint32_t *`. It stays commented because dereferencing an arbitrary address on a desktop process segfaults — there is no memory mapped at `0x40020000` here. `pENGINE_CTRL`, pointing at the simulated `ENGINE_CTRL` variable, is what the rest of the file actually uses.
+
+**[`engine.h:11–25`](engine.h#L11)**
+`engine_ctrl_reg_t` maps the register layout into three named bitfields. Read the NOTE above it before relying on this pattern elsewhere — bitfield packing is implementation-defined, and this layout is only guaranteed correct on the little-endian/GCC-or-Clang targets Calypso builds for.
+
+**[`engine.c:84–94`](engine.c#L84)**
+`engine_read_ctrl_bits()` is the only place that converts a raw `uint32_t` into the bitfield struct. It uses `memcpy` rather than a pointer cast or union — copying the bytes explicitly avoids any question about alignment or strict-aliasing rules, at the cost of one small copy.
+
+**[`main.c:81–93`](main.c#L81)**
+`BOOT_CONFIG` is declared `static const uint8_t[]` at file scope, outside `main()`. It is initialised once at compile time and never written afterward — exactly the property `const` enforces and the property that lets the linker place this data in a read-only segment (flash, on an embedded target) instead of RAM.
+
+**[`main.c:96–101`](main.c#L96)**
+The boot banner reads `BOOT_CONFIG` byte by byte and prints it as hex. This is the only place `BOOT_CONFIG` is read — it exists to demonstrate the declaration, not to drive any runtime logic in this phase.
 
 ---
 
 ## ▶️ Running this branch
 
-_Run instructions will be added after the feature code is written._
+**Prerequisites:** GCC or Clang (C99+) and CMake 3.10+, or just GCC/Clang directly.
+
+**With CMake (recommended):**
+```bash
+cmake -B build
+cmake --build build
+.\build\Debug\calypso.exe   # Windows (MSVC)
+.\build\calypso.exe         # Windows (MinGW)
+./build/calypso             # Linux / macOS
+```
+
+**Direct compilation (no CMake):**
+```bash
+gcc -std=c99 main.c sensors.c engine.c navigation.c crew.c -o calypso
+./calypso
+```
+
+The boot banner now prints the ROM-style configuration bytes:
+```
+=========================================
+  CALYPSO FLIGHT COMPUTER
+  Shuttle designation : CALYPSO-7
+  Build date          : <build date>
+  Mission ID          : 7
+  Boot config (ROM)   : 43 41 4C 07 01
+=========================================
+```
+
+The engine control section is unchanged in output — `ENGINE_CTRL` and `ENGINE_STATUS` are now `volatile`, and the pointer to them is `volatile`-qualified, but the values and bitmask operations behave identically to Phase 13. The change is in the generated code's memory-access guarantees, not in the program's visible behaviour.
+
+| Command | Action |
+|---|---|
+| `n` | Advance mission phase |
+| `s` | Sensor scan — history, averages, drift, channel reconfiguration |
+| `m` | Print crew manifest with loaded/capacity counts |
+| `e` | Emergency shutdown — frees all allocations before exit |
+| `q` | Normal quit — frees all allocations before exit |
 
 ---
 
