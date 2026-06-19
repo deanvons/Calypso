@@ -88,7 +88,7 @@ You cast the integer address to a pointer of the correct type:
 ```c
 volatile uint32_t * const pMMIO_ENGINE_CTRL = (volatile uint32_t *)0x40020000UL;
 ```
-This tells the compiler: treat the value at address `0x40020000` as a `uint32_t`. Dereferencing `*pMMIO_ENGINE_CTRL` now reads from that physical address. On a microcontroller where the engine peripheral is memory-mapped to that address, this reads the live hardware register. The `volatile` qualifier is mandatory — without it the compiler may cache the first read and skip subsequent reloads from memory. The `const` on the pointer itself means the pointer can never be reseated to a different address; only the value at that address can change.
+This tells the compiler: treat the value at address `0x40020000` as a `volatile uint32_t`. Dereferencing `*pMMIO_ENGINE_CTRL` now reads from that physical address. On a microcontroller where the engine peripheral is memory-mapped to that address, this reads the live hardware register. The `volatile` qualifier is mandatory — without it the compiler may cache the first read and skip subsequent reloads from memory. The `const` on the pointer itself means the pointer can never be reseated to a different address; only the value at that address can change.
 
 ### Thought piece 3 — `malloc` on bare-metal embedded systems
 
@@ -100,7 +100,7 @@ This tells the compiler: treat the value at address `0x40020000` as a `uint32_t`
 
 ### `volatile` — preventing the compiler from caching hardware register reads
 
-Without `volatile`, the compiler treats `ENGINE_CTRL` as an ordinary variable in RAM. In a tight loop that reads `*pENGINE_CTRL` multiple times without writing to it, the compiler is allowed to prove that nothing in the loop body modifies `ENGINE_CTRL`, load the value once into a CPU register, and use that register for all subsequent tests. On a desktop simulation where only this program writes the variable, that optimisation is always correct. On real hardware, the engine peripheral controller writes to the physical register independently — the CPU's perspective is that nothing in the C program writes it, so the compiler's optimisation is technically legal. The cached register holds a stale value; peripheral updates are silently missed.
+Without `volatile`, the compiler treats `ENGINE_CTRL` as an ordinary variable in RAM. In a tight loop that reads `*pENGINE_CTRL` multiple times without writing to it, the compiler is allowed to prove that nothing in the loop body modifies `ENGINE_CTRL`, load the value once into a CPU register, and use that register for all subsequent tests. On a desktop simulation where only this program writes the variable, that optimisation is always correct. On real hardware, the engine peripheral controller writes to the physical register independently — but from the compiler's point of view, nothing in the C program writes it, so the compiler's optimisation is technically legal. The cached register holds a stale value; peripheral updates are silently missed.
 
 Adding `volatile` breaks that optimisation by contract: the compiler must emit a memory load instruction for every read of a `volatile`-qualified variable, regardless of what the surrounding code does.
 
@@ -171,7 +171,7 @@ Phase 13 replaced the fixed `crew_member_t crew[MAX_CREW]` array with a heap-all
 
 ## 🏆 The abstraction we earned
 
-> Before this phase, reading the throttle field from `ENGINE_CTRL` required knowing that it occupies bits 4–7 and writing `(uint8_t)((*pENGINE_CTRL >> 4) & 0xF)` — arithmetic that carries no indication of what field it computes. With `engine_ctrl_reg_t`, the register layout is documented once in the struct definition: `throttle : 4` at offset 4. Reading the throttle is now `bits.throttle`. The struct is the hardware register layout written in C; the field name is self-documenting; and if the hardware team moves the throttle field in a board revision, you update the struct definition rather than auditing every shift-and-mask expression in the codebase.
+> Before this phase, reading the throttle field from `ENGINE_CTRL` required knowing that it occupies bits 4–7 and writing `(uint8_t)((*pENGINE_CTRL >> 4) & 0xF)` — arithmetic that carries no indication of what field it computes. With `engine_ctrl_reg_t`, the register layout is documented once in the struct definition: `throttle : 4` starting at bit 4. Reading the throttle is now `bits.throttle`. The struct is the hardware register layout written in C; the field name is self-documenting; and if the hardware team moves the throttle field in a board revision, you update the struct definition rather than auditing every shift-and-mask expression in the codebase.
 
 ---
 
