@@ -1,5 +1,6 @@
 /* engine.c -- engine control register operations */
 
+#include <string.h>
 #include "engine.h"
 
 /*
@@ -16,17 +17,35 @@
  *
  * Both are static: visible only within this translation unit.
  * main.c cannot read or write either register directly.
+ *
+ * volatile: on real hardware, the engine peripheral controller can update
+ * these registers independently of this program. Without volatile, the
+ * compiler is free to read a register once, cache the value in a CPU
+ * register, and skip re-reading memory on later accesses -- silently
+ * missing any change the peripheral made in between.
  */
-static uint32_t ENGINE_CTRL   = 0u;
-static uint32_t ENGINE_STATUS = 0u;
+static volatile uint32_t ENGINE_CTRL   = 0u;
+static volatile uint32_t ENGINE_STATUS = 0u;
 
 /*
- * uint32_t * const: this pointer is fixed -- it always addresses ENGINE_CTRL.
- * The value at that address can change; the pointer itself cannot be reseated.
- * On real hardware this would point to a fixed memory-mapped register address.
- * NOTE: volatile would be added in Phase 14 for true hardware register access.
+ * volatile uint32_t * const: this pointer is fixed -- it always addresses
+ * ENGINE_CTRL. The value at that address can change (the volatile says so);
+ * the pointer itself cannot be reseated to a different address (the const says so).
  */
-static uint32_t * const pENGINE_CTRL = &ENGINE_CTRL;
+static volatile uint32_t * const pENGINE_CTRL = &ENGINE_CTRL;
+
+/*
+ * NOTE: on a real MCU, ENGINE_CTRL would not be a variable in RAM at all --
+ * it would be a register at a fixed physical address the engine peripheral
+ * is mapped to. Accessing it from C means casting that address to a pointer:
+ *
+ *   volatile uint32_t * const pMMIO_ENGINE_CTRL = (volatile uint32_t *)0x40020000UL;
+ *
+ * Dereferencing pMMIO_ENGINE_CTRL would read/write address 0x40020000 directly.
+ * Left commented here -- dereferencing an arbitrary address on a desktop process
+ * segfaults, because no memory is mapped there. pENGINE_CTRL above is used instead,
+ * pointing at the simulated ENGINE_CTRL variable.
+ */
 
 /* Bit-position constants -- private to this file */
 static const uint8_t THROTTLE_SHIFT     = 4;
@@ -60,6 +79,18 @@ uint8_t engine_read_throttle(void) {
 
 uint32_t engine_get_ctrl(void) {
     return *pENGINE_CTRL;
+}
+
+engine_ctrl_reg_t engine_read_ctrl_bits(void) {
+    /*
+     * memcpy copies the raw 4 bytes of the current register value into the
+     * bitfield struct -- a plain assignment would also work here since both
+     * are the same size, but memcpy makes the byte-for-byte overlay explicit.
+     */
+    uint32_t raw = *pENGINE_CTRL;
+    engine_ctrl_reg_t bits;
+    memcpy(&bits, &raw, sizeof(bits));
+    return bits;
 }
 
 uint32_t engine_get_status(void) {
