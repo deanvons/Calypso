@@ -39,9 +39,9 @@ static volatile uint32_t * const pENGINE_CTRL = &ENGINE_CTRL;
  * it would be a register at a fixed physical address the engine peripheral
  * is mapped to. Accessing it from C means casting that address to a pointer:
  *
- *   volatile uint32_t * const pMMIO_ENGINE_CTRL = (volatile uint32_t *)0x40020000UL;
+ *   volatile uint32_t * const pMMIO_ENGINE_CTRL = (volatile uint32_t *)ENGINE_CTRL_BASE;
  *
- * Dereferencing pMMIO_ENGINE_CTRL would read/write address 0x40020000 directly.
+ * Dereferencing pMMIO_ENGINE_CTRL would read/write address ENGINE_CTRL_BASE directly.
  * Left commented here -- dereferencing an arbitrary address on a desktop process
  * segfaults, because no memory is mapped there. pENGINE_CTRL above is used instead,
  * pointing at the simulated ENGINE_CTRL variable.

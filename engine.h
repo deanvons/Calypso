@@ -5,8 +5,24 @@
  * All register access goes through the functions below.
  */
 
+/*
+ * Include guard: without this, a header pasted into the same translation
+ * unit twice (e.g. via two different #include chains) would redeclare every
+ * typedef and struct here a second time -- a compile error.
+ */
+#ifndef ENGINE_H
+#define ENGINE_H
+
 #include <stdint.h>
 #include <stdbool.h>
+
+/*
+ * ENGINE_CTRL_BASE: the physical address of the engine control register on
+ * real hardware -- the value Phase 14's commented MMIO pointer demo used as
+ * a bare literal. Naming it once here means any file that needs the address
+ * reads it from a single definition instead of retyping the hex literal.
+ */
+#define ENGINE_CTRL_BASE 0x40020000UL
 
 /*
  * engine_ctrl_reg_t: maps the ENGINE_CTRL bit layout onto named fields.
@@ -44,3 +60,5 @@ void     engine_reset(void);
 /* SOLUTION (Challenge 3): mission-complete halt flag, set by main.c on DOCKED */
 void     engine_halt(void);
 bool     engine_is_halted(void);
+
+#endif /* ENGINE_H */
