@@ -142,11 +142,15 @@ int main(void) {
     uint16_t fuel     = sensors_read_fuel(TANK_CAPACITY_KG, BURN_RATE_KGS, mission_elapsed_s);
     sensor_float_t velocity = sensors_read_velocity();
 
-    bool velocity_fault = sensors_in_fault(velocity, 0.0f, 25.0f);
+    /* NOTE: thresholds are named constants from sensors.h -- the periodic scan below reads the same four */
+    bool velocity_fault = sensors_in_fault(velocity, SENSOR_VELOCITY_FAULT_LOW, SENSOR_VELOCITY_FAULT_HIGH);
 
     // SOLUTION (Challenge 4): replace inline literal with the sensor function
     sensor_float_t cabin_pressure = sensors_read_pressure();
-    bool pressure_fault = sensors_in_fault(cabin_pressure, 80.0f, 120.0f);
+    bool pressure_fault = sensors_in_fault(cabin_pressure, SENSOR_PRESSURE_FAULT_LOW, SENSOR_PRESSURE_FAULT_HIGH);
+
+    ASSERT_SENSOR_RANGE(velocity, SENSOR_VELOCITY_FAULT_LOW, SENSOR_VELOCITY_FAULT_HIGH);
+    ASSERT_SENSOR_RANGE(cabin_pressure, SENSOR_PRESSURE_FAULT_LOW, SENSOR_PRESSURE_FAULT_HIGH);
 
     printf("Fuel level           : %" PRIu16 " kg\n", fuel);
     printf("Velocity             : %8.2f km/s  [%s]\n",
@@ -506,10 +510,11 @@ int main(void) {
 
         if (cmd == 's') {
             /* NOTE: readings[2] = 3200.0f is a demonstration value to show the HIGH_WARN path */
+            /* NOTE: readings[0]/[1] reuse the same SENSOR_*_FAULT_* constants as the boot-time check above */
             sensor_float_t readings[3] = { cabin_pressure, velocity, 3200.0f };
             bool faults[3] = {
-                sensors_in_fault(readings[0], 80.0f,  120.0f),
-                sensors_in_fault(readings[1], 0.0f,    25.0f),
+                sensors_in_fault(readings[0], SENSOR_PRESSURE_FAULT_LOW, SENSOR_PRESSURE_FAULT_HIGH),
+                sensors_in_fault(readings[1], SENSOR_VELOCITY_FAULT_LOW, SENSOR_VELOCITY_FAULT_HIGH),
                 sensors_in_fault(readings[2], 50.0f, 10000.0f)
             };
             const int SENSOR_COUNT = 3;

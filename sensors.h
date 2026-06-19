@@ -1,12 +1,47 @@
 /* sensors.h -- sensor read, fault-check, and history buffer declarations */
 
+#ifndef SENSORS_H
+#define SENSORS_H
+
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdio.h>
 
 typedef float sensor_float_t;
 
-/* NOTE: #define constant -- preprocessor macros are covered in Phase 15 */
 #define SENSOR_HISTORY_LEN 10
+
+/*
+ * Sensor fault-range thresholds -- named once here instead of typed out at
+ * every fault check. Both the boot-time check and the periodic scan in
+ * main.c read these same four constants, so widening a tolerance means
+ * changing one line instead of finding and updating every call site by hand.
+ */
+#define SENSOR_VELOCITY_FAULT_LOW    0.0f
+#define SENSOR_VELOCITY_FAULT_HIGH  25.0f
+#define SENSOR_PRESSURE_FAULT_LOW   80.0f
+#define SENSOR_PRESSURE_FAULT_HIGH 120.0f
+
+/*
+ * ASSERT_SENSOR_RANGE(val, min, max): warns on stderr, naming the file and
+ * line of the call site, if val falls outside [min, max]. This has to be a
+ * macro, not a function -- __FILE__ and __LINE__ expand wherever the macro
+ * is pasted, so each call site reports its own location. A function's
+ * __FILE__/__LINE__ would always report the function's own definition site,
+ * no matter which of main.c's call sites triggered it.
+ *
+ * NOTE: val appears twice in the expansion below (once per bound check).
+ * Safe with a plain variable; passing an expression with a side effect
+ * (a function call) would silently evaluate it twice.
+ */
+#define ASSERT_SENSOR_RANGE(val, min, max)                                  \
+    do {                                                                    \
+        if ((val) < (min) || (val) > (max)) {                               \
+            fprintf(stderr,                                                 \
+                    "ASSERT_SENSOR_RANGE failed at %s:%d -- value %.3f out of [%.3f, %.3f]\n", \
+                    __FILE__, __LINE__, (double)(val), (double)(min), (double)(max)); \
+        }                                                                    \
+    } while (0)
 
 /* --- Sensor reads ---------------------------------------------------- */
 
@@ -69,3 +104,5 @@ sensor_float_t sensors_compute_pressure_avg(void);
  */
 // SOLUTION (Challenge 5): pointer-based history walk with address output
 void           sensors_print_history_ptr(const uint16_t *buf, int len);
+
+#endif /* SENSORS_H */
