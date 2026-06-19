@@ -164,19 +164,22 @@ Phase 14 qualified `ENGINE_CTRL` and `ENGINE_STATUS` `volatile`, switched `pENGI
 
 ## 🔍 What to notice in the code
 
-**[`engine.h`](engine.h)**
-`ENGINE_CTRL_BASE` is now a named `#define` instead of a literal living only in a comment. The whole file is wrapped in an `#ifndef ENGINE_H` / `#define ENGINE_H` / `#endif` include guard.
+**[`engine.h:13–25`](engine.h#L13)**
+The `#ifndef ENGINE_H` / `#define ENGINE_H` guard wraps the whole file. `ENGINE_CTRL_BASE` (line 25) is now a named `#define` instead of a literal living only in a comment.
 
-**[`engine.c`](engine.c)**
+**[`engine.c:42–44`](engine.c#L42)**
 The commented demonstrative MMIO pointer declaration now reads `(volatile uint32_t *)ENGINE_CTRL_BASE` instead of the raw hex literal — the same address, named once.
 
-**[`sensors.h`](sensors.h)**
-`SENSOR_VELOCITY_FAULT_LOW`/`HIGH` and `SENSOR_PRESSURE_FAULT_LOW`/`HIGH` replace the duplicated literal pairs from `main.c`. `ASSERT_SENSOR_RANGE(val, min, max)` is defined here as a function-like macro — read it alongside the `#define SENSOR_HISTORY_LEN 10` already present from Phase 9, which is the same mechanism you've been using since before this phase named it. The whole file is wrapped in an include guard.
+**[`sensors.h:3–45`](sensors.h#L3)**
+The `#ifndef SENSORS_H` guard (line 3) wraps the file. `SENSOR_VELOCITY_FAULT_LOW`/`HIGH` and `SENSOR_PRESSURE_FAULT_LOW`/`HIGH` (lines 20–23) replace the duplicated literal pairs from `main.c` — read them alongside `#define SENSOR_HISTORY_LEN 10`, already present since Phase 9, which is the same mechanism this phase finally names. `ASSERT_SENSOR_RANGE(val, min, max)` (line 37) is defined here as a function-like macro — note that `val` is referenced twice in its expansion.
 
-**[`main.c`](main.c)**
-The boot-time fault checks and the periodic scan's fault checks now both read from the same named constants instead of two independent sets of literals. `ASSERT_SENSOR_RANGE` is called once for the velocity reading and once for the pressure reading. The debug-only telemetry block in the `'s'` command is wrapped in `#ifdef DEBUG_TELEMETRY` / `#endif`.
+**[`main.c:146–153`](main.c#L146)**
+The boot-time fault checks now read `SENSOR_VELOCITY_FAULT_LOW`/`HIGH` and `SENSOR_PRESSURE_FAULT_LOW`/`HIGH` instead of bare literals, and `ASSERT_SENSOR_RANGE` is called once for the velocity reading and once for the pressure reading.
 
-**[`navigation.h`](navigation.h) · [`crew.h`](crew.h)**
+**[`main.c:516–525`](main.c#L516)**
+The periodic scan's fault checks read the same two constant pairs as the boot-time check above — one set of named thresholds, two call sites. The debug-only telemetry line is wrapped in `#ifdef DEBUG_TELEMETRY` / `#endif`.
+
+**[`navigation.h:3–4`](navigation.h#L3) · [`crew.h:3–4`](crew.h#L3)**
 Both now have include guards. Neither file's declarations changed otherwise.
 
 ---
