@@ -78,12 +78,31 @@ static void log_append(char **buf, size_t *cap, size_t *len, const char *entry) 
     *len += entry_len;
 }
 
+/*
+ * BOOT_CONFIG: read-only boot configuration data -- shuttle prefix, mission
+ * ID, and boot flags, fixed at build time and never written at runtime.
+ * const tells the compiler to reject writes and tells the linker it can
+ * place the data in a read-only segment. On an embedded target, that
+ * segment is flash/ROM rather than RAM -- the data survives a power cycle
+ * without consuming any of the limited RAM budget.
+ */
+static const uint8_t BOOT_CONFIG[] = {
+    0x43u, 0x41u, 0x4Cu, /* 'C','A','L' -- shuttle designation prefix */
+    0x07u,               /* mission ID */
+    0x01u                /* boot flags: primary sensor suite enabled */
+};
+
 int main(void) {
     printf("=========================================\n");
     printf("  CALYPSO FLIGHT COMPUTER\n");
     printf("  Shuttle designation : CALYPSO-7\n");
     printf("  Build date          : %s\n", __DATE__); // NOTE: predefined preprocessor macro -- covered in Phase 15
     printf("  Mission ID          : %d\n", 7);
+    printf("  Boot config (ROM)   : ");
+    for (size_t i = 0; i < sizeof(BOOT_CONFIG); i++) {
+        printf("%02X ", BOOT_CONFIG[i]);
+    }
+    printf("\n");
     printf("=========================================\n\n");
 
     printf("Calypso online. Initialising sensor suite.\n\n");
