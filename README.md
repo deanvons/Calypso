@@ -1,14 +1,14 @@
-# Phase README — Embedded hardware layer
+# Phase README — Build configuration
 
-> **Phase 14 — Embedded C patterns** | Calypso · Core C
+> **Phase 15 — Preprocessor and macros** | Calypso · Core C
 
-Adding `volatile`, memory-mapped I/O pointer declarations, struct bitfields for register layout mapping, and `const` ROM data — the patterns that make C correct for hardware peripherals.
+Replacing duplicated literals with named `#define` constants, gating debug output with conditional compilation, introducing a function-like macro that reports its own call site, and adding include guards to every header.
 
-The engine register `ENGINE_CTRL` has been a plain `uint32_t` variable since Phase 6. That works correctly in the simulation because only this program reads and writes it. On real hardware, the situation is different: the engine peripheral controller can update the physical register independently of the CPU running this code. The compiler has no way to know that — nothing in the C code indicates that anyone other than the program touches `ENGINE_CTRL` — so it is legally allowed to keep the last-read value in a CPU register and skip re-reading memory on subsequent accesses. On real hardware, that means the program can miss a peripheral update entirely. The fix is a single keyword: `volatile`.
+The engine register base address, the sensor fault-range thresholds, and the crew name buffer size all live as numeric literals scattered through the codebase — some already pulled into a `#define`, most still typed out by hand wherever they're needed. Phase 14 left two open questions pointing straight here: the register base address `0x40020000UL` lives in one place today, but if a second file ever needed it, you'd be copying a number with no name attached to it; and the boot-time fault checks and the periodic sensor scan both hard-code the same pressure and velocity thresholds, so changing one means remembering to change the other. Neither problem is fixed by anything you've learned so far — `const` gives you a read-only *variable*, but a variable still has an address and a type, and you can't use it to size an array or guard a header. You need something that runs *before* the compiler sees your code at all.
 
-This phase also introduces the two patterns that go alongside `volatile` in embedded C: the memory-mapped I/O pointer — a `volatile` pointer cast from a fixed integer address, giving C direct access to a hardware peripheral at a known physical location — and struct bitfields, which replace the shift-and-mask sequences from Phase 6 with named fields that mirror the hardware register layout directly in the struct definition.
+You've also been quietly relying on the preprocessor since Phase 1 — `#include` has been splicing header files into every source file this whole time, and `__DATE__` has been printing the boot banner's build date since Phase 14 — without ever looking at what either one is actually doing. This phase makes the preprocessor's role explicit: it is a separate, text-only pass, and that has consequences for what it can and can't check.
 
-> **A note on scope.** Calypso runs on a desktop, not a microcontroller. The `volatile` qualifier and the MMIO pointer are demonstrated structurally — you will see the correct declarations and the reasoning behind them — but you are not observing the actual compiler caching behaviour they guard against. That behaviour is an optimisation decision made per compiler, per target, per optimisation level. What you will see is the correct form of every declaration and the rules that govern each.
+> **A note on scope.** This phase does not touch the build system. CMake's `target_compile_definitions` and command-line `-D` flags are how a real project would normally toggle `DEBUG_TELEMETRY` per build configuration — here you'll set it by hand to keep the focus on what the preprocessor does with it, not on CMake.
 
 ---
 
@@ -19,10 +19,10 @@ This phase also introduces the two patterns that go alongside `volatile` in embe
 - [Why we made this decision](#-why-we-made-this-decision)
 - [What we built in the previous branch](#-what-we-built-in-the-previous-branch)
 - [What we're doing in this branch](#-what-were-doing-in-this-branch)
-- [The abstraction we earned](#-the-abstraction-we-earned)
 - [Learning goals](#-learning-goals)
 - [Key concepts](#-key-concepts)
 - [What to notice in the code](#-what-to-notice-in-the-code)
+- [What this phase revealed](#-what-this-phase-revealed)
 - [Running this branch](#-running-this-branch)
 - [Challenges for students](#-challenges-for-students)
 - [Thought pieces for the next branch](#-thought-pieces-for-the-next-branch)
@@ -47,8 +47,8 @@ This phase also introduces the two patterns that go alongside `volatile` in embe
 | `phase-11_strings` | `char` arrays · null terminator · `strncpy` / `strcmp` / `strlen` / `strncat` · literal vs mutable | — |
 | `phase-12_structs` | `crew_member_t` · `spacecraft_t` · dot / arrow notation · nested structs · array of structs | — |
 | `phase-13_dynamic-memory` | `malloc` / `realloc` / `free` · dynamic crew roster · `NULL` checks · mission log buffer | — |
-| `📌 phase-14_embedded-patterns` | **`volatile` · memory-mapped I/O pointer · struct bitfields · `const` ROM data** | Hardware abstraction |
-| `phase-15_preprocessor` | `#define` constants · include guards · `#ifdef DEBUG_TELEMETRY` · function-like macro | — |
+| `phase-14_embedded-patterns` | `volatile` · memory-mapped I/O pointer · struct bitfields · `const` ROM data | Hardware abstraction |
+| `📌 phase-15_preprocessor` | **`#define` constants · `#ifdef DEBUG_TELEMETRY` · `ASSERT_SENSOR_RANGE` macro · include guards** | Build-time configuration |
 | `phase-16_file-io` | `fopen` / `fprintf` / `fwrite` · `calypso.log` · binary checkpoint | — |
 
 ---
@@ -66,132 +66,86 @@ git log --oneline          # find the SOLUTION commit hash
 git show <hash>            # inspect the solution in isolation
 ```
 
-### Challenge 1 — `malloc` vs `calloc` for the roster
+### Challenge 1 — What the program would see without `volatile`, and why the simulation hides it
 
-`malloc` returns uninitialised memory — the bytes contain whatever was previously at that address. If you read `roster[0].name` immediately after a raw `malloc` call without calling `crew_init`, you would be reading garbage bytes from the heap. It might look like a valid string if the first byte happened to be `'\0'`, or it might print garbage characters until finding a `'\0'` somewhere else in the heap — undefined behaviour with unpredictable output. `calloc` prevents this by zeroing every byte before returning, so `roster[0].name[0]` is always `'\0'` — a valid empty C string — before the first `crew_add` call. For the crew roster, that guarantee matters: every slot is in a known clean state without an explicit initialisation loop.
+Without `volatile`, a compiler optimizing the `while (1)` command loop is allowed to read `*pENGINE_CTRL` once, hold the value in a CPU register, and reuse that register for every later call to `engine_fault_critical()` — it has proven that nothing in the loop body writes to `ENGINE_CTRL`, so re-reading memory would (from its point of view) be a wasted instruction. On real hardware, the engine peripheral controller writes to the physical register between loop iterations, so the program would keep testing a frozen, stale copy of the register and never notice a fault the hardware had already raised. You don't observe this on the desktop because nothing in this simulation writes to `ENGINE_CTRL` except this program itself — the optimization the compiler would apply is always correct here, so adding or removing `volatile` produces identical behavior. The keyword changes a guarantee about generated machine code, not about program output on this platform.
 
-### Challenge 2 — What goes wrong with `roster = realloc(roster, new_size)` on failure
+### Challenge 2 — What breaks if `engine_ctrl_reg_t` were compiled for a big-endian MCU
 
-If `realloc` returns `NULL`, the original allocation is not freed — the old block is still valid and still allocated. But by assigning the `NULL` return directly to `roster`, you have overwritten the only pointer that held the old block's address. The old memory is still allocated, can never be freed, and can never be accessed: a permanent memory leak. With the safe pattern — `tmp = realloc(roster, new_size); if (tmp != NULL) { roster = tmp; }` — `roster` still holds the valid old address when `realloc` fails, the data is intact, and the function can return an error to the caller without losing any memory.
+The C standard leaves bitfield packing order, padding, and which end of the storage unit the first-declared field occupies entirely up to the compiler. `thrusters : 4` landing in bits 0–3 and `throttle : 4` landing in bits 4–7 is GCC/Clang's behavior on little-endian targets — not a promise the language makes. On a big-endian MCU where a different compiler packs bitfields from the most-significant bit down, `bits.throttle` could read a completely different four bits than `engine_read_throttle()`'s `(reg >> 4) & 0xF` — the two would silently disagree with no compiler warning. Projects that need a bitfield struct to behave identically across compilers typically don't rely on the compiler's packing decision at all: they verify the layout with a `static_assert` on `sizeof`, write target-specific bitfield structs guarded by `#ifdef`, or abandon bitfields for explicit shift-and-mask accessor functions, which behave identically everywhere because the arithmetic is fully specified by the standard.
 
-### Challenge 3 — Why set `roster = NULL` immediately after `free`
+### Challenge 4 — Two reasons `malloc` is risky in a hard real-time embedded context
 
-After `free(roster)`, the memory has been returned to the heap. The `roster` variable itself still holds the old address — it is now a dangling pointer. Any code that later calls `crew_add` or dereferences `roster` directly after the `free` would be accessing freed memory: undefined behaviour. Setting `roster = NULL` immediately after `free` makes any accidental later dereference fail visibly — a `NULL` dereference crashes the program at the point of the error rather than silently corrupting data or producing wrong output. It is a safety net: you cannot prevent all misuse, but you can make misuse fail loudly.
+First, allocation time is non-deterministic: `malloc` searches a free list whose size and fragmentation state vary at runtime, so one call might return in a few instructions and another might take orders of magnitude longer — a real-time system with a hard deadline cannot tolerate that variance. Second, heap fragmentation accumulates over a long-running system's lifetime: even when the total free memory is more than enough for a new allocation, no single free block may be large enough to satisfy it, so a `malloc` call that succeeded yesterday can fail today with no change in the request itself. Both properties are specific to how a general-purpose allocator manages memory — not to the absence of an OS — which is why some embedded projects that do have heap support still forbid `malloc` after startup.
 
-### Thought piece 1 — Preventing compiler caching of `ENGINE_CTRL`
+### Thought piece 1 — One definition for `0x40020000UL`
 
-The `volatile` keyword is the answer. Qualifying a variable `volatile` tells the compiler that its value can change at any time from outside the program's own code — a hardware peripheral, an interrupt service routine, or another execution context. The compiler must emit a memory load instruction for every access to a `volatile` variable rather than reusing a cached value held in a CPU register. Without `volatile`, a compiler optimising a loop that reads the same variable multiple times without writing to it is legally allowed to perform the read once, cache the result, and skip subsequent memory reads — which silently misses any hardware-driven change to the register.
+`#define ENGINE_CTRL_BASE 0x40020000UL` is exactly the tool: it names the address once, and every place that needs it — right now just the demonstrative MMIO pointer in `engine.c`, but potentially any file that includes `engine.h` — refers to the name instead of retyping the literal. If the hardware team remaps the register in a board revision, you change the one `#define` and recompile; you are not searching the codebase for every spot that happened to type `0x40020000UL` by hand. This phase makes that change.
 
-### Thought piece 2 — Accessing a value at an arbitrary address in C
+### Thought piece 2 — Toggling debug output without deleting and re-adding lines
 
-You cast the integer address to a pointer of the correct type:
-```c
-volatile uint32_t * const pMMIO_ENGINE_CTRL = (volatile uint32_t *)0x40020000UL;
-```
-This tells the compiler: treat the value at address `0x40020000` as a `volatile uint32_t`. Dereferencing `*pMMIO_ENGINE_CTRL` now reads from that physical address. On a microcontroller where the engine peripheral is memory-mapped to that address, this reads the live hardware register. The `volatile` qualifier is mandatory — without it the compiler may cache the first read and skip subsequent reloads from memory. The `const` on the pointer itself means the pointer can never be reseated to a different address; only the value at that address can change.
+`#ifdef DEBUG_TELEMETRY` / `#endif` wraps the debug-only output so the preprocessor includes it in the compiled program only when `DEBUG_TELEMETRY` is defined — undefined, and the lines between the guards are stripped from the source before the compiler ever sees them, with zero runtime cost. You flip it by defining the macro at compile time (`-DDEBUG_TELEMETRY` on the command line, or a `target_compile_definitions` entry in CMake) rather than editing the source at all. This phase wraps a block of telemetry output in exactly this guard.
 
-### Thought piece 3 — `malloc` on bare-metal embedded systems
+### Thought piece 3 — What happens when a header is included twice in one translation unit
 
-`malloc` requires a C runtime heap — a region of RAM configured by the linker script, a free-list implementation, and a `_sbrk` (or equivalent) call to expand the heap on request. On a bare-metal system with no operating system, none of this is provided automatically, and many embedded toolchains disable the heap entirely. Even where `malloc` is available, the risks are significant: allocation time is non-deterministic because the free-list search takes variable time depending on fragmentation, which can violate hard real-time timing constraints; and heap fragmentation in a long-running system can cause a later allocation to fail even when the total free bytes would be sufficient. The standard embedded practice is to size all buffers statically at startup — large enough for the worst-case scenario — and never call `malloc` after initialisation.
+`#include` is a literal text-splice: the preprocessor deletes the `#include` line and pastes the named file's contents in its place, every time it sees the directive. If `main.c` includes `sensors.h` directly, and also includes `navigation.h`, which itself contains `#include "sensors.h"`, the preprocessor pastes `sensors.h`'s full contents into `main.c`'s translation unit twice. The compiler then sees `typedef float sensor_float_t;` and the `engine_ctrl_reg_t`-style declarations a second time — a redefinition, which is a compile error for most declaration forms. This phase adds the include guard that prevents it.
 
 ---
 
 ## 💡 Why we made this decision
 
-### `volatile` — preventing the compiler from caching hardware register reads
+### The preprocessor — text substitution before the compiler ever runs
 
-Without `volatile`, the compiler treats `ENGINE_CTRL` as an ordinary variable in RAM. In a tight loop that reads `*pENGINE_CTRL` multiple times without writing to it, the compiler is allowed to prove that nothing in the loop body modifies `ENGINE_CTRL`, load the value once into a CPU register, and use that register for all subsequent tests. On a desktop simulation where only this program writes the variable, that optimisation is always correct. On real hardware, the engine peripheral controller writes to the physical register independently — but from the compiler's point of view, nothing in the C program writes it, so the compiler's optimisation is technically legal. The cached register holds a stale value; peripheral updates are silently missed.
-
-Adding `volatile` breaks that optimisation by contract: the compiler must emit a memory load instruction for every read of a `volatile`-qualified variable, regardless of what the surrounding code does.
+Every `#include`, `#define`, and `#ifdef` in Calypso's source is resolved by a separate pass that runs before the compiler proper ever sees the code — the same preprocessor that has been splicing your header files together since Phase 8, and printing `__DATE__` into the boot banner since Phase 14. That pass has no concept of C types, scope, or syntax; it operates purely on text. `#define ENGINE_CTRL_BASE 0x40020000UL` does not declare a variable of any type — it tells the preprocessor "replace every later occurrence of the identifier `ENGINE_CTRL_BASE` with the text `0x40020000UL`," and the compiler that runs afterward never even knows a macro was involved. `#ifdef DEBUG_TELEMETRY` doesn't evaluate a runtime condition — it asks the preprocessor "has this name been `#define`d," and if not, deletes the guarded text before compilation, leaving nothing behind for the compiler to skip over at runtime.
 
 ```mermaid
 flowchart LR
-    HW["Hardware peripheral\nwrites register"] --> PHYS["Physical memory\n0x40020000"]
-    PHYS -->|"volatile: forced reload\non every access"| FRESH["CPU sees\ncurrent value ✓"]
-    PHYS -.->|"without volatile:\ncompiler may cache"| STALE["CPU sees\nstale register copy ✗"]
+    SRC["engine.c\n#define ENGINE_CTRL_BASE ...\n#include \"engine.h\"\n#ifdef DEBUG_TELEMETRY ... #endif"] --> PP["Preprocessor\ntext substitution only -- no types, no scope"]
+    PP -->|"expands macros\nsplices headers\nstrips unmatched #ifdef blocks"| TU["Expanded translation unit\n(plain C -- no macros or directives remain)"]
+    TU --> CC["Compiler\ntype-checks and compiles the expanded text"]
 ```
 
-### Memory-mapped I/O — a pointer that is a hardware address
+### Symbolic constants over repeated literals
 
-On a real microcontroller, `ENGINE_CTRL` is not a variable in RAM. It is a specific physical memory address the processor maps to the engine peripheral's control register — `0x40020000` in the Calypso hardware spec. The peripheral controller writes to that address; the CPU reads from it. There is no C variable to take the address of. To give C code access to it, you cast the known integer address to a pointer:
+`0x40020000UL` exists once in the codebase today, as a comment in `engine.c`. The sensor fault-range thresholds are not so lucky: `80.0f` and `120.0f` for cabin pressure, and `0.0f` and `25.0f` for velocity, are each typed out twice in `main.c` — once at boot, once again inside the periodic sensor scan. Nothing connects those two call sites; if you needed to widen the pressure tolerance, you would have to remember both locations and update them in lockstep, and the compiler gives you no warning if you miss one. Naming the value once in a `#define` and writing the name at both call sites makes that link explicit — there is exactly one place where the threshold is decided, and both checks read from it.
 
-```c
-volatile uint32_t * const pMMIO_ENGINE_CTRL = (volatile uint32_t *)0x40020000UL;
-```
+### A macro, not a function — why `ASSERT_SENSOR_RANGE` needs to expand at the call site
 
-`*pMMIO_ENGINE_CTRL` now reads from address `0x40020000`. Every read is forced to go to physical memory — not a CPU register — because the pointer type is `volatile uint32_t *`. The `const` on the pointer means it can never be reseated; what it points at can change (that is the peripheral register), but the pointer always refers to the same address.
-
-In the simulation, `pENGINE_CTRL` still points to `&ENGINE_CTRL` — a real variable in RAM, not a hardware address. The MMIO pointer is shown as a commented declaration in `engine.c` to demonstrate the pattern without crashing the program (dereferencing `0x40020000` on a desktop causes a segfault because no memory is mapped there).
-
-### Struct bitfields — naming bits instead of shifting them
-
-Phase 6 introduced shift-and-mask expressions to read and write fields within `ENGINE_CTRL`. The throttle field occupies bits 4–7:
-
-```c
-/* read the throttle field */
-uint8_t throttle = (uint8_t)((*pENGINE_CTRL >> 4) & 0xF);
-
-/* write the throttle field */
-*pENGINE_CTRL &= ~((uint32_t)0xF << 4);
-*pENGINE_CTRL |=  ((uint32_t)level << 4);
-```
-
-The arithmetic is correct, but the intent — read or write the throttle field — is buried in numbers. A struct bitfield names each field and declares its width in bits:
-
-```c
-typedef struct {
-    uint32_t thrusters : 4;  /* bits 0-3: one enable bit per thruster pair */
-    uint32_t throttle  : 4;  /* bits 4-7: throttle level 0-15 */
-    uint32_t reserved  : 24; /* bits 8-31: reserved */
-} engine_ctrl_reg_t;
-```
-
-`bits.throttle` reads the throttle field directly. The register layout is visible in the struct definition; the field name is self-documenting; and if the throttle field moved to different bits in a new hardware revision, you update the struct in one place rather than hunting through arithmetic.
-
-One important caveat: bitfield layout within a storage unit is **implementation-defined**. The C standard does not guarantee that `thrusters` occupies the lowest bits, or that fields are packed without gaps, or which end of the integer the first field starts from. The mapping above is correct on little-endian targets with GCC and Clang — which covers every platform Calypso targets — but it is not portable across architectures or guaranteed to match the register layout on a different MCU without careful verification.
+`ASSERT_SENSOR_RANGE` reports the file and line number where an out-of-range reading was detected, using the predefined macros `__FILE__` and `__LINE__`. A function can't do this: if `assert_sensor_range()` were an ordinary function called from ten places in `main.c`, `__FILE__` and `__LINE__` inside its body would always expand to the one file and line where the function itself is *defined* — every call would report the same location, regardless of which call site actually triggered it. A macro doesn't have this problem, because it has no body of its own to report from: the preprocessor pastes the macro's text, `__FILE__`, `__LINE__`, and all, directly into each call site before the compiler ever runs, so `__FILE__` and `__LINE__` are evaluated fresh at every single place `ASSERT_SENSOR_RANGE` appears.
 
 ---
 
 ## ⏮️ What we built in the previous branch
 
-Phase 13 replaced the fixed `crew_member_t crew[MAX_CREW]` array with a heap-allocated roster using `calloc`/`realloc`/`free`. A dynamic mission log buffer in `main.c` grew with `realloc` as entries accumulated, using the safe temporary-pointer pattern throughout. Every allocation path included a `NULL` check; every exit path freed the allocations before returning. The SOLUTION commit at the start of this branch adds `crew_shrink()` (Challenge 4) — which reallocates the roster down to exactly `loaded` slots using the same safe-temporary pattern — and marks `log_append()` (Challenge 5 stretch), which was already present in Phase 13's code as the mission log buffer's append function.
+Phase 14 qualified `ENGINE_CTRL` and `ENGINE_STATUS` `volatile`, switched `pENGINE_CTRL` to a `volatile`-qualified pointer, added a commented memory-mapped I/O pointer declaration demonstrating the cast-from-a-fixed-address pattern, introduced `engine_ctrl_reg_t` to read register fields as named bitfields instead of shift-and-mask arithmetic, and added a `const uint8_t BOOT_CONFIG[]` array annotated for ROM placement. The SOLUTION commit at the start of this branch adds `engine_halt()` / `engine_is_halted()` (Challenge 3) — a `volatile bool` flag the command loop checks on every iteration so the mission halts automatically on reaching `DOCKED` — and a bitfield printout after `engine_set_throttle(7)` (Challenge 5, stretch) confirming `bits.throttle` matches `engine_read_throttle()`.
 
 ---
 
 ## 🎯 What we're doing in this branch
 
-- Qualify `ENGINE_CTRL` and `ENGINE_STATUS` as `static volatile uint32_t` in `engine.c` — every access forces a memory read rather than reusing a cached CPU register value
-- Update `pENGINE_CTRL` from `uint32_t * const` to `volatile uint32_t * const` — the pointer type must match the volatile-qualified object it points to
-- Add a commented `pMMIO_ENGINE_CTRL` declaration in `engine.c` showing the cast from a fixed integer address to a `volatile uint32_t *` — the form used on real hardware with memory-mapped peripherals
-- Declare `engine_ctrl_reg_t` in `engine.h` — a struct with three bitfields (`thrusters : 4`, `throttle : 4`, `reserved : 24`) that map the `ENGINE_CTRL` layout into named fields
-- Add `engine_read_ctrl_bits()` to `engine.c` — copies the current `ENGINE_CTRL` value into an `engine_ctrl_reg_t` and returns it, so `bits.throttle` can be compared against the manual `(reg >> 4) & 0xF` extraction from Phase 6
-- Add `const uint8_t BOOT_CONFIG[]` in `main.c` — a read-only boot data array annotated for ROM/flash placement, demonstrating how `const` signals the linker to keep the data in non-volatile memory on embedded targets
-
----
-
-## 🏆 The abstraction we earned
-
-> Before this phase, reading the throttle field from `ENGINE_CTRL` required knowing that it occupies bits 4–7 and writing `(uint8_t)((*pENGINE_CTRL >> 4) & 0xF)` — arithmetic that carries no indication of what field it computes. With `engine_ctrl_reg_t`, the register layout is documented once in the struct definition: `throttle : 4` starting at bit 4. Reading the throttle is now `bits.throttle`. The struct is the hardware register layout written in C; the field name is self-documenting; and if the hardware team moves the throttle field in a board revision, you update the struct definition rather than auditing every shift-and-mask expression in the codebase.
+- Add `#ifndef` / `#define` / `#endif` include guards to `engine.h`, `sensors.h`, `navigation.h`, and `crew.h`
+- Add `#define ENGINE_CTRL_BASE 0x40020000UL` in `engine.h`; update the commented MMIO pointer declaration in `engine.c` to reference it instead of the raw literal
+- Add symbolic sensor fault-range constants in `sensors.h` — `SENSOR_VELOCITY_FAULT_LOW`/`HIGH` and `SENSOR_PRESSURE_FAULT_LOW`/`HIGH` — and replace the two duplicated literal pairs in `main.c`'s boot-time checks and periodic scan
+- Add the function-like macro `ASSERT_SENSOR_RANGE(val, min, max)` in `sensors.h`, using `__FILE__` and `__LINE__` to report where an out-of-range reading was detected; call it once for the velocity reading and once for the pressure reading in `main.c`
+- Wrap a block of debug-only telemetry output in the periodic sensor scan (`main.c`, the `'s'` command) in `#ifdef DEBUG_TELEMETRY` / `#endif` — silent by default, compiled in only when the macro is defined
 
 ---
 
 ## 🧑🏻‍🏫 Learning goals
 
 ### Understand
-- **Explain** `volatile` — why the compiler must reload a variable from memory on every access, and what silent bugs occur without it in code that reads hardware control and status registers
-- **Explain** why heap allocation (`malloc`/`realloc`) is typically avoided in bare-metal embedded systems where timing must be deterministic and no OS reclaims memory on exit
-- **Explain** ISR constraints — why an interrupt service routine must return quickly, must not block, must not call `malloc`, and why any variable it shares with the main loop must be `volatile`
+- **Explain** the C preprocessor as a text-substitution pass that runs before compilation and has no knowledge of C types or scope — applied to why `ASSERT_SENSOR_RANGE` expands inline wherever it's called rather than being type-checked the way a function call would be
+- **Identify** `__FILE__`, `__LINE__`, and `__DATE__` as predefined macros and what each expands to — `__DATE__` has been printing the boot banner's build date since Phase 14; `__FILE__` and `__LINE__` now appear inside `ASSERT_SENSOR_RANGE`'s expansion
 
 ### Apply
-- **Declare** `volatile`-qualified register variables in `engine.c` and a memory-mapped I/O pointer cast from a fixed integer address — the correct form for accessing hardware peripherals in C
-- **Apply** bitmask set, clear, test, and read operations to `volatile uint32_t` hardware control and status registers — the same Phase 6 operations, now on correctly-qualified variables
-- **Use** fixed-width integer types (`uint8_t`, `uint16_t`, `uint32_t`) exclusively in all engine register code, making the size and range of every register value explicit
-- **Declare** `engine_ctrl_reg_t` as a struct with named bitfields that match the `ENGINE_CTRL` register layout, and use `engine_read_ctrl_bits()` to populate it
-- **Apply** `const` to `BOOT_CONFIG[]` to signal read-only ROM/flash placement to both the compiler (reject writes) and the linker (place in flash)
+- **Use** `#define` to name `ENGINE_CTRL_BASE` and the sensor fault-range thresholds instead of repeating numeric literals across `main.c`
+- **Define** `ASSERT_SENSOR_RANGE(val, min, max)` as a function-like macro and trace what it expands to at a specific call site in `main.c`
+- **Use** `#ifdef DEBUG_TELEMETRY` to compile a block of sensor telemetry output in or out without touching the surrounding code
+- **Write** `#ifndef` / `#define` / `#endif` include guards in `engine.h`, `sensors.h`, `navigation.h`, and `crew.h`
 
 ### Analyze
-- **Examine** the difference between `uint32_t * const` (a const pointer to non-volatile data) and `volatile uint32_t * const` (a const pointer to volatile data) — what each qualifier prevents and why both are needed for a fixed hardware register pointer
-- **Compare** bitfield struct access (`bits.throttle`) with manual shift-and-mask (`(reg >> 4) & 0xF`) — what the abstraction buys in readability, and where its portability limits apply
+- **Examine** what the preprocessor produces from `engine.c` before the compiler ever sees it — trace how `#include`, `#define`, and `#ifdef` each transform the source text differently
+- **Compare** `ASSERT_SENSOR_RANGE` as a macro against an equivalent `assert_sensor_range()` function — what the macro gains by expanding at the call site, and what it gives up by skipping the compiler's normal type checking
 
 ---
 
@@ -199,39 +153,37 @@ Phase 13 replaced the fixed `crew_member_t crew[MAX_CREW]` array with a heap-all
 
 | Concept | Plain English |
 |---|---|
-| **`volatile`** | A type qualifier that tells the compiler "this variable can change at any time from outside the program — read it from memory on every access, do not cache it in a CPU register." |
-| **Compiler register caching** | An optimisation where the compiler holds a variable's value in a CPU register rather than re-reading memory on each access. Safe for ordinary variables; silently wrong for hardware registers updated by the peripheral independently. |
-| **Memory-mapped I/O (MMIO)** | Hardware peripherals controlled by reading and writing specific physical memory addresses. The CPU accesses them like ordinary RAM, but the underlying device responds to every read and write. |
-| **MMIO pointer** | A `volatile T * const` pointer initialised by casting a known integer address — `(volatile uint32_t *)0x40020000UL` — that gives C code direct access to a hardware peripheral register at a fixed physical location. |
-| **Struct bitfields** | Struct members declared with a bit-width — `uint32_t throttle : 4` — that the compiler packs into a specified number of bits. Used to overlay a hardware register and name its fields rather than computing them with shift-and-mask arithmetic. |
-| **Bitfield portability** | Bitfield layout within a storage unit is implementation-defined: field order, padding, and which bits a field occupies may vary across compilers and targets. Bitfields work reliably within one compiler/target pair but are not guaranteed to be portable across architectures. |
-| **ISR (Interrupt Service Routine)** | A function invoked automatically by the hardware when an interrupt fires. Must return quickly: no blocking calls, no `malloc`, no long computation. Variables shared between an ISR and the main loop must be `volatile` so both sides always see the live memory value. |
-| **`const` for ROM placement** | Declaring data `const` signals to the compiler (reject writes at compile time) and the linker (place the object in the read-only flash section). On embedded targets, `const` data lives in non-volatile flash rather than consuming RAM that is lost on power cycle. |
+| **The C preprocessor** | A text-substitution pass that runs before the compiler ever sees the code. It has no concept of C syntax, types, or scope — it only replaces and deletes text. |
+| **Object-like macro** | `#define NAME value` — every later occurrence of `NAME` in the source is replaced with `value`, verbatim, with no type checking. |
+| **Function-like macro** | `#define NAME(args) ...` — expands with its arguments substituted into the macro body at every call site, before the compiler runs. |
+| **`__FILE__` / `__LINE__` / `__DATE__`** | Predefined macros the preprocessor expands to the current source file name, current line number, and compilation date — useful for diagnostics that must report exactly where they were triggered. |
+| **Conditional compilation** | `#ifdef` / `#ifndef` / `#endif` blocks that include or exclude source text depending on whether a macro is defined. The excluded branch is deleted before the compiler runs — it isn't skipped at runtime, it never exists in the compiled program. |
+| **Include guard** | An `#ifndef HEADER_H` / `#define HEADER_H` / `#endif` wrapper around a header's contents that stops the same declarations from being pasted into one translation unit twice. |
 
 ---
 
 ## 🔍 What to notice in the code
 
-**[`engine.c:27–28`](engine.c#L27)**
-`ENGINE_CTRL` and `ENGINE_STATUS` are now `static volatile uint32_t`. The comment immediately above explains why: on real hardware the peripheral controller writes these registers independently of this program, so the compiler cannot be allowed to cache a stale value in a CPU register.
+**[`engine.h`](engine.h)**
+`ENGINE_CTRL_BASE` is now a named `#define` instead of a literal living only in a comment. The whole file is wrapped in an `#ifndef ENGINE_H` / `#define ENGINE_H` / `#endif` include guard.
 
-**[`engine.c:35`](engine.c#L35)**
-`pENGINE_CTRL` changed from `uint32_t * const` to `volatile uint32_t * const`. The pointer's target type must match the volatile-qualified variable it addresses — a plain `uint32_t *` pointed at a `volatile uint32_t` would be a type mismatch the compiler should warn about.
+**[`engine.c`](engine.c)**
+The commented demonstrative MMIO pointer declaration now reads `(volatile uint32_t *)ENGINE_CTRL_BASE` instead of the raw hex literal — the same address, named once.
 
-**[`engine.c:37–48`](engine.c#L37)**
-The commented `pMMIO_ENGINE_CTRL` declaration shows the real-hardware form: a fixed integer address cast directly to a `volatile uint32_t *`. It stays commented because dereferencing an arbitrary address on a desktop process segfaults — there is no memory mapped at `0x40020000` here. `pENGINE_CTRL`, pointing at the simulated `ENGINE_CTRL` variable, is what the rest of the file actually uses.
+**[`sensors.h`](sensors.h)**
+`SENSOR_VELOCITY_FAULT_LOW`/`HIGH` and `SENSOR_PRESSURE_FAULT_LOW`/`HIGH` replace the duplicated literal pairs from `main.c`. `ASSERT_SENSOR_RANGE(val, min, max)` is defined here as a function-like macro — read it alongside the `#define SENSOR_HISTORY_LEN 10` already present from Phase 9, which is the same mechanism you've been using since before this phase named it. The whole file is wrapped in an include guard.
 
-**[`engine.h:11–25`](engine.h#L11)**
-`engine_ctrl_reg_t` maps the register layout into three named bitfields. Read the NOTE above it before relying on this pattern elsewhere — bitfield packing is implementation-defined, and this layout is only guaranteed correct on the little-endian/GCC-or-Clang targets Calypso builds for.
+**[`main.c`](main.c)**
+The boot-time fault checks and the periodic scan's fault checks now both read from the same named constants instead of two independent sets of literals. `ASSERT_SENSOR_RANGE` is called once for the velocity reading and once for the pressure reading. The debug-only telemetry block in the `'s'` command is wrapped in `#ifdef DEBUG_TELEMETRY` / `#endif`.
 
-**[`engine.c:84–94`](engine.c#L84)**
-`engine_read_ctrl_bits()` is the only place that converts a raw `uint32_t` into the bitfield struct. It uses `memcpy` rather than a pointer cast or union — copying the bytes explicitly avoids any question about alignment or strict-aliasing rules, at the cost of one small copy.
+**[`navigation.h`](navigation.h) · [`crew.h`](crew.h)**
+Both now have include guards. Neither file's declarations changed otherwise.
 
-**[`main.c:81–93`](main.c#L81)**
-`BOOT_CONFIG` is declared `static const uint8_t[]` at file scope, outside `main()`. It is initialised once at compile time and never written afterward — exactly the property `const` enforces and the property that lets the linker place this data in a read-only segment (flash, on an embedded target) instead of RAM.
+---
 
-**[`main.c:101–105`](main.c#L101)**
-The boot banner reads `BOOT_CONFIG` byte by byte and prints it as hex. This is the only place `BOOT_CONFIG` is read — it exists to demonstrate the declaration, not to drive any runtime logic in this phase.
+## 🔗 What this phase revealed
+
+> **LEARNING MOMENT:** `ASSERT_SENSOR_RANGE(val, min, max)` substitutes `val` into its expansion wherever the macro body references it — and the body references `val` twice, once for the low-bound comparison and once for the high-bound comparison. That's harmless as long as `val` is a plain variable, which is the only thing this codebase ever passes in. But if `val` were an expression with a side effect — `ASSERT_SENSOR_RANGE(sensors_read_velocity(), ...)` instead of `ASSERT_SENSOR_RANGE(velocity, ...)` — `sensors_read_velocity()` would run twice, silently, because the preprocessor has no concept of "evaluate this once and reuse the result" the way a function call does. The macro itself does nothing to enforce passing a plain variable; that discipline lives entirely in how you choose to call it.
 
 ---
 
@@ -239,7 +191,7 @@ The boot banner reads `BOOT_CONFIG` byte by byte and prints it as hex. This is t
 
 **Prerequisites:** GCC or Clang (C99+) and CMake 3.10+, or just GCC/Clang directly.
 
-**With CMake (recommended):**
+**With CMake:**
 ```bash
 cmake -B build
 cmake --build build
@@ -254,22 +206,20 @@ gcc -std=c99 main.c sensors.c engine.c navigation.c crew.c -o calypso
 ./calypso
 ```
 
-The boot banner now prints the ROM-style configuration bytes:
+**With debug telemetry enabled** — add `-DDEBUG_TELEMETRY` to either build:
+```bash
+gcc -std=c99 -DDEBUG_TELEMETRY main.c sensors.c engine.c navigation.c crew.c -o calypso
 ```
-=========================================
-  CALYPSO FLIGHT COMPUTER
-  Shuttle designation : CALYPSO-7
-  Build date          : <build date>
-  Mission ID          : 7
-  Boot config (ROM)   : 43 41 4C 07 01
-=========================================
+or, with CMake:
+```bash
+cmake -B build -DCMAKE_C_FLAGS=-DDEBUG_TELEMETRY
+cmake --build build
 ```
-
-The engine control section is unchanged in output — `ENGINE_CTRL` and `ENGINE_STATUS` are now `volatile`, and the pointer to them is `volatile`-qualified, but the values and bitmask operations behave identically to Phase 13. The change is in the generated code's memory-access guarantees, not in the program's visible behaviour.
+With the flag defined, the `'s'` command's periodic sensor scan prints an additional debug line of raw readings. Without it, that line does not appear — and is not compiled into the binary at all, not merely hidden at runtime.
 
 | Command | Action |
 |---|---|
-| `n` | Advance mission phase |
+| `n` | Advance mission phase (halts the command loop automatically on reaching `DOCKED`) |
 | `s` | Sensor scan — history, averages, drift, channel reconfiguration |
 | `m` | Print crew manifest with loaded/capacity counts |
 | `e` | Emergency shutdown — frees all allocations before exit |
@@ -280,33 +230,29 @@ The engine control section is unchanged in output — `ENGINE_CTRL` and `ENGINE_
 ## ✏️ Challenges for students
 
 **Challenge 1 — Analytical**
-In `engine.c`, `ENGINE_CTRL` is now `static volatile uint32_t`. Without the `volatile` qualifier, a compiler optimising the `while (1)` command loop might load `*pENGINE_CTRL` into a CPU register once and reuse that register on every call to `engine_fault_critical()` — never re-reading memory. In the simulation, this would not actually matter because no hardware updates `ENGINE_CTRL` independently. On real hardware, where the engine peripheral controller writes to the register between loop iterations, it would matter critically. Explain in your own words: what would the program see without `volatile`? What does `volatile` change about the generated code? Why does the desktop simulation not let you observe this behaviour directly?
+`ASSERT_SENSOR_RANGE` is a macro specifically so that `__FILE__` and `__LINE__` report the call site, not the macro's own definition. Suppose you rewrote it as an ordinary function `void assert_sensor_range(float val, float min, float max)` and called it from three different places in `main.c`. What would `__FILE__` and `__LINE__` print from inside that function, and why would all three calls report the same thing?
 
-**Challenge 2 — Analytical**
-The C standard says bitfield layout within a storage unit is implementation-defined. For `engine_ctrl_reg_t`, the mapping of `thrusters` to bits 0–3 and `throttle` to bits 4–7 is a guarantee provided by GCC and Clang on little-endian targets — not by the C standard itself. What would break if `engine_ctrl_reg_t` were compiled on a big-endian MCU where bitfields are packed from the most-significant bit? Would `bits.throttle` still match `engine_read_throttle()`? How do embedded C projects that need bitfield structs to work correctly across architectures typically handle this?
+**Challenge 2 — Additive**
+`engine.c`'s `thruster_bit()` clamps any thruster number `>= 4` to bit 0, because `ENGINE_CTRL`'s thruster field is 4 bits wide — but the `4` appears as a bare literal in that comparison. Add `#define THRUSTER_COUNT 4` to `engine.h` and replace the literal `4u` in `thruster_bit()` with `THRUSTER_COUNT`.
 
 **Challenge 3 — Additive**
-Add `static volatile bool engine_halted = false;` at file scope in `engine.c`. Add two functions: `void engine_halt(void)` sets it to `true`; `bool engine_is_halted(void)` returns it. Declare both in `engine.h`. In the DOCKED case of the mission phase `switch` in `main.c`, call `engine_halt()`. At the top of the `while (1)` command loop, check `engine_is_halted()` and `break` if it returns `true` — the loop exits automatically when the mission completes, without waiting for a `q` command. The `volatile` qualifier matters here: without it, the compiler could legally check `engine_halted` once before the loop begins and never re-read the variable inside the loop.
+The boot banner in `main.c` always prints `BOOT_CONFIG`'s raw bytes as hex — useful for development, not something a production boot sequence needs to show. Wrap that `for` loop and its surrounding `printf` calls in `#ifdef DEBUG_TELEMETRY` / `#endif`, the same pattern used for the periodic scan's debug line. Build once with the flag and once without, and confirm the boot banner differs.
 
 **Challenge 4 — Analytical**
-Phase 13 used `malloc` and `realloc` freely for the dynamic crew roster and mission log buffer. On a bare-metal embedded system with no OS, `malloc` may not be available — and many embedded projects forbid its use entirely, even where a C runtime provides it. Name two specific technical reasons why `malloc` is problematic in a hard real-time embedded context. "There is no OS" does not count as a reason — focus on properties of `malloc` itself that conflict with embedded system requirements.
+"What this phase revealed" points out that `ASSERT_SENSOR_RANGE` evaluates `val` twice in its expansion, which would silently double-call a function passed as the argument. The C standard library's own `assert(expr)` macro also references `expr` more than once internally (once to test it, once to print it on failure) — yet `assert` is considered safe to use with arbitrary expressions in practice. What convention do C programmers follow when calling macros like `assert` or `ASSERT_SENSOR_RANGE` that avoids ever triggering the double-evaluation hazard, given that the macro itself cannot enforce it?
 
 **Challenge 5 — Additive (stretch)**
-In the engine control section of `main.c`, after `engine_set_throttle(7)`, call `engine_read_ctrl_bits()` and print both the raw hex value from `engine_get_ctrl()` and the individual bitfields — `bits.thrusters` and `bits.throttle` — side by side. At that point in the code, thrusters 0 and 2 are both enabled and the throttle has just been set to 7:
-```
-ENGINE_CTRL bits: raw=0x00000075  thrusters=5  throttle=7
-```
-Verify that `bits.throttle` matches `engine_read_throttle()` and that the raw hex value is consistent with the bitmask calculations from Phase 6. What should `bits.thrusters` show *after* the following `engine_disable_thruster(0)` call runs — and does it match the raw register at that point?
+Add a second function-like macro, `CLAMP(val, lo, hi)`, that expands to an expression returning `val` clamped into the inclusive range `[lo, hi]` — for example `(((val) < (lo)) ? (lo) : (((val) > (hi)) ? (hi) : (val)))`. Use it inside `engine_set_throttle()` in `engine.c` to clamp `level` to `0`–`15` before writing it into the register, so a caller passing `engine_set_throttle(20)` is silently capped at the register's maximum representable throttle value instead of corrupting adjacent bits.
 
 ---
 
 ## 💭 Thought pieces for the next branch
 
-1. The base address `0x40020000UL` for the engine peripheral lives in `engine.c`. If the hardware team remaps it in a new board revision, we update one place — but imagine it appeared in three source files. What does C give us to define a value once and use it everywhere without going through a function call or a variable?
-2. Debug telemetry is mixed into the core sensor reads and engine control output. On a production firmware build, we do not want that output at all. How could we include or exclude it based on a compile-time flag — without deleting and re-adding lines every time we switch between debug and production builds?
-3. Headers currently have no multiple-inclusion protection. If `main.c` includes `sensors.h` directly, and also includes `navigation.h` which itself includes `sensors.h` again, the preprocessor expands both `#include` directives in full. What does the compiler then see, and what happens when it encounters the same `typedef` or `enum` declaration a second time in the same translation unit?
+1. All telemetry disappears the moment Calypso reboots — there is no persistent record of anything that happened during the previous run. If an anomaly occurred right before a reboot, how would you find out about it afterward, with nothing but what's currently in this program?
+2. Every output in this program so far has gone to `printf` and `stdout` — the terminal. What if you wanted that same output to go to a file as well, or instead? What would C need to give you to write to something other than the screen?
+3. A float sensor value like `32.7` could be stored as the text `"32.7\n"` or as its raw 4-byte IEEE-754 binary representation. Which is more compact on disk? Which is easier to read back correctly on a different machine? When would you choose each?
 
 ---
 
-*Previous branch: [`phase-13_dynamic-memory`]*
-*Next branch: [`phase-15_preprocessor`]*
+*Previous branch: [`phase-14_embedded-patterns`]*
+*Next branch: [`phase-16_file-io`]*
