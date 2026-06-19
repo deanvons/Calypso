@@ -517,6 +517,12 @@ int main(void) {
                 sensors_in_fault(readings[1], SENSOR_VELOCITY_FAULT_LOW, SENSOR_VELOCITY_FAULT_HIGH),
                 sensors_in_fault(readings[2], 50.0f, 10000.0f)
             };
+
+#ifdef DEBUG_TELEMETRY
+            /* DEBUG_TELEMETRY: raw readings before fault classification -- compiled out unless defined */
+            printf("  [DEBUG] raw readings: pressure=%.3f velocity=%.3f spike=%.3f\n",
+                   readings[0], readings[1], readings[2]);
+#endif
             const int SENSOR_COUNT = 3;
 
             printf("--- Periodic Sensor Scan ---\n");
