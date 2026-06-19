@@ -1,5 +1,8 @@
 /* crew.h -- crew manifest: type definitions and function declarations */
 
+#ifndef CREW_H
+#define CREW_H
+
 #include <stdint.h>
 
 // NOTE: #define constants -- preprocessor macros are covered in Phase 15
@@ -101,3 +104,5 @@ void           crew_update_rank(crew_member_t *m, CrewRank new_rank);
 
 /* SOLUTION (Challenge 4): shrink the roster to exactly loaded slots, releasing unused capacity. */
 void           crew_shrink(void);
+
+#endif /* CREW_H */
