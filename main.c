@@ -98,11 +98,14 @@ int main(void) {
     printf("  Shuttle designation : CALYPSO-7\n");
     printf("  Build date          : %s\n", __DATE__); // NOTE: predefined preprocessor macro -- covered in Phase 15
     printf("  Mission ID          : %d\n", 7);
+#ifdef DEBUG_TELEMETRY
+    /* SOLUTION (Challenge 3): boot-time ROM dump is debug-only, same pattern as the periodic scan's debug line */
     printf("  Boot config (ROM)   : ");
     for (size_t i = 0; i < sizeof(BOOT_CONFIG); i++) {
         printf("%02X ", BOOT_CONFIG[i]);
     }
     printf("\n");
+#endif
     printf("=========================================\n\n");
 
     printf("Calypso online. Initialising sensor suite.\n\n");
@@ -239,6 +242,11 @@ int main(void) {
     engine_ctrl_reg_t bits = engine_read_ctrl_bits();
     printf("ENGINE_CTRL bits: raw=0x%08" PRIX32 "  thrusters=%u  throttle=%u\n",
            engine_get_ctrl(), bits.thrusters, bits.throttle);
+
+    /* SOLUTION (Challenge 5, stretch): CLAMP caps an out-of-range request instead of corrupting the reserved bits above the throttle field */
+    engine_set_throttle(20);
+    printf("Set throttle = 20      : 0x%08" PRIX32 "  (clamped to %u)\n",
+           engine_get_ctrl(), engine_read_throttle());
 
     engine_disable_thruster(0);
     printf("Disable thruster 0     : 0x%08" PRIX32 "\n", engine_get_ctrl());

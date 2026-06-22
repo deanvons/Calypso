@@ -55,9 +55,10 @@ static const uint8_t TEMP_WARNING_BIT   = 1;
 static const uint8_t CRITICAL_FAULT_BIT = 2;
 
 /* Map thruster number 0-3 to its bit position in ENGINE_CTRL */
-// NOTE: thruster >= 4 silently maps to bit 0 -- avoids undefined shift past register width
+// NOTE: thruster >= THRUSTER_COUNT silently maps to bit 0 -- avoids undefined shift past register width
 static uint8_t thruster_bit(uint8_t thruster) {
-    return (thruster < 4u) ? thruster : 0u;
+    // SOLUTION (Challenge 2): named constant instead of the bare literal 4u
+    return (thruster < THRUSTER_COUNT) ? thruster : 0u;
 }
 
 void engine_enable_thruster(uint8_t thruster) {
@@ -69,6 +70,12 @@ void engine_disable_thruster(uint8_t thruster) {
 }
 
 void engine_set_throttle(uint8_t level) {
+    /*
+     * SOLUTION (Challenge 5, stretch): clamp level into the register's
+     * representable range before writing it -- engine_set_throttle(20) now
+     * caps at 15 instead of corrupting the reserved bits above the field.
+     */
+    level = CLAMP(level, 0, 15);
     *pENGINE_CTRL &= ~((uint32_t)THROTTLE_MASK << THROTTLE_SHIFT);
     *pENGINE_CTRL |=  ((uint32_t)level          << THROTTLE_SHIFT);
 }

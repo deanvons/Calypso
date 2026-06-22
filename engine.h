@@ -24,6 +24,16 @@
  */
 #define ENGINE_CTRL_BASE 0x40020000UL
 
+/* SOLUTION (Challenge 2): named width of the thruster field instead of the bare literal 4u in thruster_bit() */
+#define THRUSTER_COUNT 4
+
+/*
+ * SOLUTION (Challenge 5, stretch): clamps val into the inclusive range
+ * [lo, hi]. Every parameter is fully parenthesised so the expansion stays
+ * correct no matter what expression is substituted for val, lo, or hi.
+ */
+#define CLAMP(val, lo, hi) (((val) < (lo)) ? (lo) : (((val) > (hi)) ? (hi) : (val)))
+
 /*
  * engine_ctrl_reg_t: maps the ENGINE_CTRL bit layout onto named fields.
  * Replaces shift-and-mask arithmetic ((reg >> 4) & 0xF) with bits.throttle.
