@@ -8,7 +8,7 @@ The engine register base address, the sensor fault-range thresholds, and the cre
 
 You've also been quietly relying on the preprocessor since Phase 1 — `#include` has been splicing header files into every source file this whole time, and `__DATE__` has been printing the boot banner's build date since Phase 14 — without ever looking at what either one is actually doing. This phase makes the preprocessor's role explicit: it is a separate, text-only pass, and that has consequences for what it can and can't check.
 
-> **A note on scope.** This phase does not touch the build system. CMake's `target_compile_definitions` and command-line `-D` flags are how a real project would normally toggle `DEBUG_TELEMETRY` per build configuration — here you'll set it by hand to keep the focus on what the preprocessor does with it, not on CMake.
+> **A note on scope.** The `CALYPSO_DEBUG_TELEMETRY` CMake option (see "Running this branch") is a thin configure-time switch — it sets the same `-DDEBUG_TELEMETRY` flag CMake would otherwise need typed by hand. It does not change what the preprocessor does; the lesson here is still `#ifdef`, not CMake's `option()` machinery.
 
 ---
 
@@ -182,6 +182,9 @@ The periodic scan's fault checks read the same two constant pairs as the boot-ti
 **[`navigation.h:3–4`](navigation.h#L3) · [`crew.h:3–4`](crew.h#L3)**
 Both now have include guards. Neither file's declarations changed otherwise.
 
+**[`CMakeLists.txt`](CMakeLists.txt)**
+`CALYPSO_DEBUG_TELEMETRY` is a CMake `option()` — `OFF` by default — that wraps the same `target_compile_definitions(calypso PRIVATE DEBUG_TELEMETRY)` call you could write by hand. It's a convenience for the CMake build path; the `#ifdef DEBUG_TELEMETRY` it controls is the actual lesson, in `sensors.h` and `main.c`.
+
 ---
 
 ## 🔗 What this phase revealed
@@ -209,16 +212,16 @@ gcc -std=c99 main.c sensors.c engine.c navigation.c crew.c -o calypso
 ./calypso
 ```
 
-**With debug telemetry enabled** — add `-DDEBUG_TELEMETRY` to either build:
+**With debug telemetry enabled** — direct compilation, add `-DDEBUG_TELEMETRY`:
 ```bash
 gcc -std=c99 -DDEBUG_TELEMETRY main.c sensors.c engine.c navigation.c crew.c -o calypso
 ```
-or, with CMake:
+With CMake, use the `CALYPSO_DEBUG_TELEMETRY` option instead — it's `OFF` by default:
 ```bash
-cmake -B build -DCMAKE_C_FLAGS=-DDEBUG_TELEMETRY
+cmake -B build -DCALYPSO_DEBUG_TELEMETRY=ON
 cmake --build build
 ```
-With the flag defined, the `'s'` command's periodic sensor scan prints an additional debug line of raw readings. Without it, that line does not appear — and is not compiled into the binary at all, not merely hidden at runtime.
+With either form, the `'s'` command's periodic sensor scan prints an additional debug line of raw readings. Without it, that line does not appear — and is not compiled into the binary at all, not merely hidden at runtime.
 
 | Command | Action |
 |---|---|
