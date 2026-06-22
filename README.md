@@ -100,14 +100,14 @@ Every `#include`, `#define`, and `#ifdef` in Calypso's source is resolved by a s
 
 ```mermaid
 flowchart LR
-    SRC["engine.c\n#define ENGINE_CTRL_BASE ...\n#include \"engine.h\"\n#ifdef DEBUG_TELEMETRY ... #endif"] --> PP["Preprocessor\ntext substitution only -- no types, no scope"]
+    SRC["engine.c\n#define ENGINE_CTRL_BASE ...\n#include engine.h\n#ifdef DEBUG_TELEMETRY ... #endif"] --> PP["Preprocessor\ntext substitution only -- no types, no scope"]
     PP -->|"expands macros\nsplices headers\nstrips unmatched #ifdef blocks"| TU["Expanded translation unit\n(plain C -- no macros or directives remain)"]
     TU --> CC["Compiler\ntype-checks and compiles the expanded text"]
 ```
 
 ### Symbolic constants over repeated literals
 
-`0x40020000UL` exists once in the codebase today, as a comment in `engine.c`. The sensor fault-range thresholds are not so lucky: `80.0f` and `120.0f` for cabin pressure, and `0.0f` and `25.0f` for velocity, are each typed out twice in `main.c` — once at boot, once again inside the periodic sensor scan. Nothing connects those two call sites; if you needed to widen the pressure tolerance, you would have to remember both locations and update them in lockstep, and the compiler gives you no warning if you miss one. Naming the value once in a `#define` and writing the name at both call sites makes that link explicit — there is exactly one place where the threshold is decided, and both checks read from it.
+Before this phase, `0x40020000UL` existed only once in the codebase, as a comment in `engine.c` — low risk, since there was nothing to keep in sync. The sensor fault-range thresholds were not so lucky: `80.0f` and `120.0f` for cabin pressure, and `0.0f` and `25.0f` for velocity, were each typed out twice in `main.c` — once at boot, once again inside the periodic sensor scan. Nothing connected those two call sites; if you needed to widen the pressure tolerance, you would have had to remember both locations and update them in lockstep, with no compiler warning if you missed one. Naming each value once in a `#define` and writing the name at both call sites makes that link explicit — there is exactly one place where the threshold is decided, and both checks now read from it.
 
 ### A macro, not a function — why `ASSERT_SENSOR_RANGE` needs to expand at the call site
 
