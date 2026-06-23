@@ -312,6 +312,9 @@ int main(void) {
     char  *log_buf = malloc(log_cap);
     if (log_buf == NULL) {
         fprintf(stderr, "log_buf: allocation failed\n");
+        /* NOTE: log_open() already succeeded above -- this early return is an
+           existing exit path that gained a new resource to close when log.c was added. */
+        log_close();
         crew_free();
         return 1;
     }
@@ -646,7 +649,10 @@ int main(void) {
     final_checkpoint.fuel_kg       = fuel;
     final_checkpoint.velocity_kms  = velocity;
     final_checkpoint.crew_count    = crew_count();
-    log_save_checkpoint("calypso.chk", &final_checkpoint);
+    // NOTE: checked the same way log_open()'s return value is checked at boot -- both report a failure instead of leaving it to chance.
+    if (!log_save_checkpoint("calypso.chk", &final_checkpoint)) {
+        printf("  Warning: checkpoint was not saved.\n");
+    }
     log_write("MISSION END: normal quit");
     log_close();
 
@@ -667,7 +673,9 @@ emergency_shutdown:
     shutdown_checkpoint.fuel_kg       = fuel;
     shutdown_checkpoint.velocity_kms  = velocity;
     shutdown_checkpoint.crew_count    = crew_count();
-    log_save_checkpoint("calypso.chk", &shutdown_checkpoint);
+    if (!log_save_checkpoint("calypso.chk", &shutdown_checkpoint)) {
+        printf("  Warning: checkpoint was not saved.\n");
+    }
     log_write("MISSION END: emergency shutdown");
     log_close();
 
