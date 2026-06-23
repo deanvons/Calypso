@@ -199,6 +199,10 @@ Both exit paths — normal quit and `emergency_shutdown` — build a `checkpoint
 
 > **LEARNING MOMENT:** `log_load_checkpoint()` faithfully restores the previous mission's state into a `checkpoint_t` — but `main.c` only *prints* it at boot. The mission still starts from `PREFLIGHT` every time, with sensor readings re-taken from scratch, no matter what the checkpoint says. A flight computer that genuinely resumed a mission would need to feed `checkpoint_t`'s fields back into the live `mission_phase`, the crew roster, and sensor state — and that is a meaningfully bigger problem than reading and writing a struct: it means deciding what "resuming" a partially-completed docking manoeuvre or an in-progress burn even means. This phase gives you the I/O primitives a real resume feature would be built on; it does not build the resume feature itself.
 
+> **LEARNING MOMENT:** `log_open()` near the top of `main()` adds a new resource that *every* exit path through the function now has to account for — not just the two paths this phase added code to. Phase 13's `malloc` failure path for `log_buf` already existed before this phase, already called `crew_free()` on failure, and now also calls `log_close()`, for the same reason. Adding a resource to a function means re-auditing every existing early return in it, whether or not the new code you're writing touches that path directly.
+
+> **LEARNING MOMENT:** `log_save_checkpoint()` returns `bool` for exactly the reason `log_open()`'s return value is checked at boot — to tell the caller whether the operation actually succeeded. Both checkpoint-save calls at the end of `main()` check that return value, the same way `log_open()` does, instead of trusting that a disk write never fails. A codebase that checks some failure-prone calls and silently ignores others like it teaches the next reader the wrong lesson about which calls are worth checking.
+
 ---
 
 ## ▶️ Running this branch
