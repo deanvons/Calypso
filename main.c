@@ -9,6 +9,7 @@
 #include "engine.h"
 #include "navigation.h"
 #include "crew.h"
+#include "log.h"
 
 enum MissionPhase {
     PREFLIGHT,  /* 0 -- pre-launch checks */
@@ -93,6 +94,33 @@ static const uint8_t BOOT_CONFIG[] = {
 };
 
 int main(void) {
+    /* --- Persistent flight log (Phase 16) ------------------------------ */
+    /*
+     * Everything printed so far lived only in this process's memory and
+     * vanished the moment the program exited. log_scan_for_anomaly() and
+     * log_load_checkpoint() read what the *previous* run left on disk --
+     * before this run has written anything of its own.
+     */
+    printf("Checking persistent flight log...\n");
+    log_scan_for_anomaly("calypso.log");
+
+    checkpoint_t prev_checkpoint;
+    if (log_load_checkpoint("calypso.chk", &prev_checkpoint)) {
+        printf("  Previous checkpoint found: phase=%d  fuel=%" PRIu16 " kg  velocity=%.2f km/s  crew=%d\n\n",
+               prev_checkpoint.mission_phase, prev_checkpoint.fuel_kg,
+               prev_checkpoint.velocity_kms, prev_checkpoint.crew_count);
+    } else {
+        printf("  No previous checkpoint found.\n\n");
+    }
+
+    /* NOTE: log_open's bool return is checked, but a failed text log is not fatal --
+       log_write()/log_write_raw() below silently no-op while log_fp is NULL. */
+    if (!log_open("calypso.log")) {
+        printf("  Continuing without persistent text log this session.\n\n");
+    } else {
+        log_write_raw("=== MISSION START ===\n");
+    }
+
     printf("=========================================\n");
     printf("  CALYPSO FLIGHT COMPUTER\n");
     printf("  Shuttle designation : CALYPSO-7\n");
@@ -290,17 +318,23 @@ int main(void) {
     log_buf[0] = '\0';
 
     log_append(&log_buf, &log_cap, &log_len, "BOOT: Calypso online\n");
+    /* NOTE: log_write mirrors log_append's entry to disk -- log_buf still vanishes
+       on exit (Phase 13); calypso.log does not. */
+    log_write("BOOT: Calypso online");
 
     /* crew_add: appends one member; reallocs the roster when capacity is reached */
     crew_add("CHEN",    RANK_COMMANDER, 101, ASSIGN_FLIGHT);
     log_append(&log_buf, &log_cap, &log_len, "CREW: CHEN loaded\n");
+    log_write("CREW: CHEN loaded");
 
     crew_add("VASQUEZ", RANK_PILOT,     102, ASSIGN_FLIGHT);
     log_append(&log_buf, &log_cap, &log_len, "CREW: VASQUEZ loaded\n");
+    log_write("CREW: VASQUEZ loaded");
 
     /* loaded==capacity (2==2): crew_add reallocs to 4 before inserting PARK */
     crew_add("PARK",    RANK_ENGINEER,  103, ASSIGN_FLIGHT);
     log_append(&log_buf, &log_cap, &log_len, "CREW: PARK loaded\n");
+    log_write("CREW: PARK loaded");
 
     printf("  [after 3 crew] capacity=%d (realloc: 2 -> 4)\n\n", crew_capacity());
 
@@ -368,9 +402,11 @@ int main(void) {
 
     crew_add("OKAFOR", RANK_SCIENTIST, 104, ASSIGN_SCIENCE);
     log_append(&log_buf, &log_cap, &log_len, "DOCK: OKAFOR transferred aboard\n");
+    log_write("DOCK: OKAFOR transferred aboard");
 
     crew_add("PETROV",  RANK_MEDIC,     105, ASSIGN_MEDICAL);
     log_append(&log_buf, &log_cap, &log_len, "DOCK: PETROV transferred aboard\n");
+    log_write("DOCK: PETROV transferred aboard");
 
     printf("  After:  %d loaded / %d capacity (realloc: 4 -> 8)\n\n",
            crew_count(), crew_capacity());
@@ -537,6 +573,12 @@ int main(void) {
             for (int i = 0; i < SENSOR_COUNT; i++) {
                 if (faults[i]) {
                     printf("  Sensor %d: FAULTED -- skipping\n", i);
+                    /* NOTE: this is the entry log_scan_for_anomaly() finds on the *next* run --
+                       it is built with snprintf and handed to log_write(), which still does the
+                       actual fprintf() to disk. */
+                    char anomaly[64];
+                    snprintf(anomaly, sizeof(anomaly), "ANOMALY: sensor %d FAULT during periodic scan", i);
+                    log_write(anomaly);
                     continue;
                 }
                 const sensor_float_t HIGH_WARN = 2000.0f;
@@ -593,6 +635,21 @@ int main(void) {
     }
 
     printf("\nCalypso offline.\n");
+
+    /*
+     * Persistent flight log: snapshot mission state into a checkpoint_t and
+     * write it with log_save_checkpoint() before the roster it was read from
+     * is freed below -- crew_count() must run before crew_free() resets it to 0.
+     */
+    checkpoint_t final_checkpoint;
+    final_checkpoint.mission_phase = (int)current_phase;
+    final_checkpoint.fuel_kg       = fuel;
+    final_checkpoint.velocity_kms  = velocity;
+    final_checkpoint.crew_count    = crew_count();
+    log_save_checkpoint("calypso.chk", &final_checkpoint);
+    log_write("MISSION END: normal quit");
+    log_close();
+
     /* every allocation has exactly one matching free */
     free(log_buf); log_buf = NULL;
     crew_free();
@@ -604,6 +661,16 @@ emergency_shutdown:
     printf("ENGINE_CTRL cleared    : 0x%08" PRIX32 "\n", engine_get_ctrl());
     printf("ENGINE_STATUS          : 0x%08" PRIX32 "\n", engine_get_status());
     printf("Calypso offline.\n");
+
+    checkpoint_t shutdown_checkpoint;
+    shutdown_checkpoint.mission_phase = (int)current_phase;
+    shutdown_checkpoint.fuel_kg       = fuel;
+    shutdown_checkpoint.velocity_kms  = velocity;
+    shutdown_checkpoint.crew_count    = crew_count();
+    log_save_checkpoint("calypso.chk", &shutdown_checkpoint);
+    log_write("MISSION END: emergency shutdown");
+    log_close();
+
     free(log_buf); log_buf = NULL;
     crew_free();
     return 0;
