@@ -184,14 +184,17 @@ Phase 15 added `#define` constants for the engine register base address and the 
 **[`main.c:97–122`](main.c#L97)**
 Before printing the boot banner, `log_scan_for_anomaly("calypso.log")` and `log_load_checkpoint("calypso.chk", &prev_checkpoint)` read whatever the *previous* run left behind. `log_open("calypso.log")` then opens this session's handle, and `log_write_raw()` writes the `=== MISSION START ===` marker.
 
-**[`main.c:320–340`](main.c#L320) · [`main.c:403–410`](main.c#L403)**
+**[`main.c:312–321`](main.c#L312)**
+The Phase 13 `malloc` failure path for `log_buf` now calls `log_close()` before returning — `log_open()` succeeded a few dozen lines earlier, so this early exit has a resource to release too.
+
+**[`main.c:323–340`](main.c#L323) · [`main.c:406–412`](main.c#L406)**
 Each `log_append()` call — the Phase 13 in-memory buffer — now has a `log_write()` call beside it, writing the same text to `calypso.log` so it survives past this process's exit.
 
-**[`main.c:573–582`](main.c#L573)**
+**[`main.c:575–585`](main.c#L575)**
 When the periodic sensor scan flags a fault, an `ANOMALY` entry is built with `snprintf()` and written with `log_write()` — this is the exact line `log_scan_for_anomaly()` finds at the start of the *next* run.
 
-**[`main.c:637–672`](main.c#L637)**
-Both exit paths — normal quit and `emergency_shutdown` — build a `checkpoint_t` from the live `current_phase`, `fuel`, `velocity`, and `crew_count()`, save it with `log_save_checkpoint()`, write a final log entry, and close the handle with `log_close()`. `crew_count()` is read before `crew_free()` runs, since `crew_free()` resets it to `0`.
+**[`main.c:640–662`](main.c#L640) · [`main.c:664–684`](main.c#L664)**
+Both exit paths — normal quit and `emergency_shutdown` — build a `checkpoint_t` from the live `current_phase`, `fuel`, `velocity`, and `crew_count()`, check `log_save_checkpoint()`'s return value the same way `log_open()`'s is checked at boot, write a final log entry, and close the handle with `log_close()`. `crew_count()` is read before `crew_free()` runs, since `crew_free()` resets it to `0`.
 
 ---
 
