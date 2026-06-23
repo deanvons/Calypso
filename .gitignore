@@ -3,3 +3,6 @@ CLAUDE.md
 build/
 check_*
 *_test.exe
+*.o
+calypso.log
+calypso.chk
