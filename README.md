@@ -166,7 +166,32 @@ Phase 15 added `#define` constants for the engine register base address and the 
 
 ## 🔍 What to notice in the code
 
-*Completed once the code for this phase is written.*
+**[`log.h:11–22`](log.h#L11)**
+`checkpoint_t` stores `mission_phase` as a plain `int`, not `enum MissionPhase` — that enum lives in `main.c`, and this header has no reason to depend on it. Every field is fixed-width, so the on-disk layout doesn't depend on which platform wrote it.
+
+**[`log.c:16–32`](log.c#L16)**
+`log_open()` calls `fopen(path, "a")` and checks the returned `FILE*` against `NULL` before doing anything else. `log_close()` checks `fclose()`'s return value — `0` on success, `EOF` on a write that failed to flush.
+
+**[`log.c:35–47`](log.c#L35)**
+`log_write()` uses `fprintf()` to format `entry` plus a trailing newline; `log_write_raw()` uses `fputs()` to write `line` verbatim with no formatting and no added newline. Both check `log_fp` against `NULL` first — if `log_open()` never succeeded, both quietly do nothing.
+
+**[`log.c:49–77`](log.c#L49)**
+`log_scan_for_anomaly()` opens `path` for reading and calls `fgets()` in a loop until it returns `NULL`, then asks `ferror()` whether that `NULL` meant a real read failure or `feof()` whether it just meant the file ended normally — that distinction is the whole reason both functions exist.
+
+**[`log.c:80–119`](log.c#L80)**
+`log_save_checkpoint()` opens `path` in binary mode (`"wb"`) and writes the struct with a single `fwrite()` call, checking that exactly `1` element was written. `log_load_checkpoint()` mirrors it with `"rb"` and `fread()` — note the `DELIBERATE` comment on the short-read branch: it exists for a truncated or corrupted `calypso.chk`, a case this run does not actually produce.
+
+**[`main.c:97–122`](main.c#L97)**
+Before printing the boot banner, `log_scan_for_anomaly("calypso.log")` and `log_load_checkpoint("calypso.chk", &prev_checkpoint)` read whatever the *previous* run left behind. `log_open("calypso.log")` then opens this session's handle, and `log_write_raw()` writes the `=== MISSION START ===` marker.
+
+**[`main.c:320–340`](main.c#L320) · [`main.c:403–410`](main.c#L403)**
+Each `log_append()` call — the Phase 13 in-memory buffer — now has a `log_write()` call beside it, writing the same text to `calypso.log` so it survives past this process's exit.
+
+**[`main.c:573–582`](main.c#L573)**
+When the periodic sensor scan flags a fault, an `ANOMALY` entry is built with `snprintf()` and written with `log_write()` — this is the exact line `log_scan_for_anomaly()` finds at the start of the *next* run.
+
+**[`main.c:637–672`](main.c#L637)**
+Both exit paths — normal quit and `emergency_shutdown` — build a `checkpoint_t` from the live `current_phase`, `fuel`, `velocity`, and `crew_count()`, save it with `log_save_checkpoint()`, write a final log entry, and close the handle with `log_close()`. `crew_count()` is read before `crew_free()` runs, since `crew_free()` resets it to `0`.
 
 ---
 
@@ -178,7 +203,42 @@ Phase 15 added `#define` constants for the engine register base address and the 
 
 ## ▶️ Running this branch
 
-*Completed once the code for this phase is written.*
+**Prerequisites:** GCC or Clang (C99+) and CMake 3.10+, or just GCC/Clang directly.
+
+**With CMake:**
+```bash
+cmake -B build
+cmake --build build
+.\build\Debug\calypso.exe   # Windows (MSVC)
+.\build\calypso.exe         # Windows (MinGW)
+./build/calypso             # Linux / macOS
+```
+
+**Direct compilation (no CMake):**
+```bash
+gcc -std=c99 main.c sensors.c engine.c navigation.c crew.c log.c -o calypso
+./calypso
+```
+
+**With debug telemetry enabled** — direct compilation, add `-DDEBUG_TELEMETRY`:
+```bash
+gcc -std=c99 -DDEBUG_TELEMETRY main.c sensors.c engine.c navigation.c crew.c log.c -o calypso
+```
+With CMake, use the `CALYPSO_DEBUG_TELEMETRY` option instead:
+```bash
+cmake -B build -DCALYPSO_DEBUG_TELEMETRY=ON
+cmake --build build
+```
+
+**Run it twice in a row** to see the persistence this phase adds. The first run prints "No previous mission log found" and "No previous checkpoint found" at boot, since `calypso.log` and `calypso.chk` don't exist yet. Run it again — with the default `s` command at least once before quitting — and the second run's boot sequence reports the velocity-sensor anomaly the first run recorded, and the mission-state checkpoint the first run saved on exit. Inspect `calypso.log` directly afterward; it is plain text and grows by one more block with every run.
+
+| Command | Action |
+|---|---|
+| `n` | Advance mission phase (halts the command loop automatically on reaching `DOCKED`) |
+| `s` | Sensor scan — history, averages, drift, channel reconfiguration |
+| `m` | Print crew manifest with loaded/capacity counts |
+| `e` | Emergency shutdown — saves a checkpoint, closes the log, frees all allocations before exit |
+| `q` | Normal quit — saves a checkpoint, closes the log, frees all allocations before exit |
 
 ---
 
