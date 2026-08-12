@@ -1,6 +1,6 @@
 # Calypso
 
-Calypso is an interplanetary crew shuttle. This repo is the source code for its onboard flight computer — a bare-metal C system that monitors sensor readings, tracks mission state, manages crew records, and logs telemetry to persistent storage.
+Calypso is an interplanetary crew shuttle. This repo is the source code for its onboard flight computer — a system that monitors sensor readings, tracks mission state, manages crew records, and logs telemetry to persistent storage.
 
 The project grows from a single `main.c` into a multi-file C system with dedicated modules for sensors, navigation, crew management, and hardware control. Each phase introduces a genuine operational requirement that the existing codebase cannot satisfy, and the C feature introduced in that phase is the natural answer.
 
